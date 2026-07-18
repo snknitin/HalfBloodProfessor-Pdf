@@ -219,3 +219,10 @@ __marimo__/
 samples/Ch1 - Introductions.pdf
 samples/Ch5-Prompt Engineering.pdf
 samples/Ch6 - RAG and Agents.pdf
+
+samples/*
+outputs/*
+
+# Cloudflare Worker dependencies and local state
+node_modules/
+.wrangler/
