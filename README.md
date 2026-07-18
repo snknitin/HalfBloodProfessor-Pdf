@@ -1,72 +1,88 @@
-# Half-Blood Professor PDF
+# HalfBlood Professor PDF
 
-Upload a textbook chapter. Get it back annotated like the Half-Blood Prince's copy of
-*Advanced Potion-Making* — outdated facts struck out with corrections inked above them,
-weak claims circled with arrows to caustic margin notes, the important lines underlined,
-the hopeless paragraphs scribbled out entirely. In handwriting, in the margins, on your PDF.
+Upload a searchable textbook chapter and get back a new PDF with useful underlines,
+circles, corrections, diagrams, and handwritten margin notes. The AI decides what to
+mark; deterministic Python draws every coordinate and pen stroke.
 
-> "This prototype supports small chapters." Upload only content you have the right to use.
-> Annotations are AI-generated and may be wrong.
+Public site: **https://hb-pdf.higgsfield.app**
 
-## How it works
+> Upload only content you have the right to use. Annotations are AI-generated and may
+> be wrong. PDF bytes and extracted text are processed in memory and never stored.
 
-1. **Extract** — PyMuPDF pulls the text (with coordinates) from each page.
-2. **Think** — one LLM call per page returns JSON: which exact phrases to strike, circle,
-   underline, or scribble out, and what the margin notes say.
-3. **Scribble** — deterministic Python maps each quoted phrase back to its coordinates
-   (`page.search_for`) and draws hand-jittered vector ink: wavy strikethroughs, imperfect
-   circles, rotated cursive margin notes in an embedded handwriting font.
-4. **Download** — the annotated PDF streams straight back. Nothing is stored.
+## Current architecture
 
-The LLM only decides *what* to mark and *what the notes say* — every coordinate, wobble,
-and pen stroke is seeded, deterministic Python, so inference cost stays at one small
-JSON-mode call per page and identical uploads produce identical ink.
+1. The Higgsfield site accepts a PDF, verifies Cloudflare Turnstile, and enforces three
+   free requests per IP hash per day with KV.
+2. Its server route streams the file to the authenticated Cloudflare engine.
+3. FastAPI extracts text with PyMuPDF and calls OpenAI once per page with a strict
+   structured-output schema.
+4. The unchanged Track A renderer maps exact quotes to coordinates and returns the
+   annotated PDF as a streamed result.
 
-## Stack
+| Part | Implementation |
+| --- | --- |
+| Website | React 19 + TanStack Start on Higgsfield |
+| API protection | Cloudflare Turnstile + server-side secret verification |
+| Rate limit | 3 annotations per IP hash per UTC day in KV |
+| Engine | FastAPI + PyMuPDF in a Cloudflare Container |
+| LLM | OpenAI Responses API, `gpt-5.4-mini`, strict structured outputs |
+| Storage | No PDF storage; annotation JSON cache only |
 
-| | |
-|---|---|
-| Server + pipeline | Python, FastAPI, PyMuPDF (one service, no queue, no DB) |
-| LLM | OpenAI API, JSON mode, one call per page, cached by page hash |
-| Frontend | Single static HTML page (drag-drop, inline preview, download) |
-| Fonts | Caveat + Homemade Apple (OFL, embedded) |
-| Analytics | PostHog (3 events) |
-| Hosting | Railway/Render behind Cloudflare DNS |
+## Limits
 
-Full architecture, scope decisions, LLM contract, and rendering spec: **[BUILD_SPEC.md](BUILD_SPEC.md)**
+- Searchable, digital-text PDFs only; scanned PDFs need OCR first.
+- Up to 50 pages and 20 MB.
+- English-first annotations.
 
-## Quickstart
+## Local renderer quickstart
 
-```bash
+```powershell
 pip install pymupdf
-
-# annotate a PDF from an annotation JSON (see app/annotations_ch1.json for the schema)
-python -m app.pipeline "samples/Ch1 - Introductions.pdf" app/annotations_ch1.json \
-       outputs/Ch1_annotated.pdf --pages 2-6 --previews outputs/preview
-
-# smoke test (one of each ink mark, incl. the ligature-matching fallback)
+python -m app.pipeline "samples/Ch1 - Introductions.pdf" app/annotations_ch1.json `
+  outputs/Ch1_annotated.pdf --pages 2-6 --previews outputs/preview
 python tests/test_smoke.py
 ```
 
-The annotation JSON is exactly what the LLM will emit (see the contract in
-[BUILD_SPEC.md](BUILD_SPEC.md#llm-contract)); today it can also be authored by hand,
-which keeps the renderer testable with zero inference cost.
+## Engine tests
 
-## Limits (by design)
+```powershell
+docker build -f engine/Dockerfile -t hb-pdf-engine .
+docker run --rm hb-pdf-engine python -m unittest discover -s tests -p test_engine.py
+```
 
-Digital-text PDFs only (no OCR), ≤ 15 pages, ≤ 10 MB, English-first. See the cut list in
-[BUILD_SPEC.md](BUILD_SPEC.md#out-cut-with-re-add-triggers) for what was deliberately skipped and when it comes back.
+## Production activation
+
+The visual site is deployed. The upload API becomes live after these account-owned
+secrets are entered:
+
+1. Register this Cloudflare account's `workers.dev` subdomain once at the
+   [Workers onboarding page](https://dash.cloudflare.com/5e38dd8c3a09cad103db7c0d5139f40c/workers/onboarding).
+2. From `engine/`, deploy the Worker and enter the OpenAI key only at Wrangler's hidden
+   prompt:
+
+```powershell
+cd engine
+npm run deploy
+npx.cmd wrangler secret put OPENAI_API_KEY
+```
+
+`HB_MODEL` is not another key. It is the model name, currently `gpt-5.4-mini`.
+`HB_SHARED_SECRET` is not purchased or acquired from a provider. It is a random private
+password generated once and installed on both the engine and site so only the site can
+call the engine. The Turnstile widget already exists; its private verification value
+must also be installed as a site secret.
+
+See [engine/README.md](engine/README.md) for the service commands and
+[BUILD_SPEC.md](BUILD_SPEC.md) for the complete product specification.
 
 ## Status
 
-- [x] Problem refined, references collected ([references/](references/))
-- [x] Build spec
-- [x] Phase 1: ink primitives ([app/scribe.py](app/scribe.py)) — wavy strike/underline, circles,
-      arrows, highlights, scribbles, doodles, margin notes, vertical/horizontal chain diagrams
-- [x] Phase 2: quote → coordinates with ligature fallback + margin placement engine
-      ([app/pipeline.py](app/pipeline.py))
-- [x] End-to-end proof: [outputs/Ch1_annotated.pdf](outputs/Ch1_annotated.pdf) — 5 pages,
-      25 expert annotations, from [app/annotations_ch1.json](app/annotations_ch1.json)
-- [ ] Phase 3: LLM per page (annotation JSON currently hand-authored to the same schema)
-- [ ] Phase 5: web UI (FastAPI + static page)
-- [ ] Phase 6: deploy + PostHog
+- [x] Track A deterministic PDF renderer
+- [x] Track B1 authenticated engine, structured OpenAI calls, caching, SSE, tests
+- [x] 50-page and 20 MB validation
+- [x] Higgsfield website, responsive upload UI, sample PDF, preview, download
+- [x] Turnstile widget and server verification path
+- [x] KV daily rate-limit path
+- [x] Public website deployment
+- [ ] One-time Cloudflare Workers subdomain registration
+- [ ] Account-owned production secret entry and final live API round-trip

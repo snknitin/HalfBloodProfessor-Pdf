@@ -1,0 +1,11 @@
+.git
+.env
+**/__pycache__
+**/*.py[cod]
+engine/node_modules
+engine/wrangler-dry-run
+outputs
+references
+README_files
+samples
+tests

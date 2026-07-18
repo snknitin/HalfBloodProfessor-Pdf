@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "hb-pdf-engine",
+  "main": "worker.js",
+  "compatibility_date": "2026-07-18",
+  "containers": [
+    {
+      "class_name": "HbPdfEngine",
+      "image": "./Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "HB_PDF_ENGINE",
+        "class_name": "HbPdfEngine"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["HbPdfEngine"]
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "HB_CACHE",
+      "id": "6f8c1b7c890c483f9372bf7793613363"
+    }
+  ]
+}
