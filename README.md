@@ -6,6 +6,16 @@ mark; deterministic Python draws every coordinate and pen stroke.
 
 Public site: **https://hb-pdf.higgsfield.app**
 
+## Videos
+
+### Motivation
+
+[![Watch the HalfBlood Professor motivation video](https://img.youtube.com/vi/jVXj5G1zeqo/hqdefault.jpg)](https://youtu.be/jVXj5G1zeqo)
+
+### Demo
+
+[![Watch the HalfBlood Professor demo video](https://img.youtube.com/vi/sMI9_z5XCMk/hqdefault.jpg)](https://youtu.be/sMI9_z5XCMk)
+
 > Upload only content you have the right to use. Annotations are AI-generated and may
 > be wrong. PDF bytes and extracted text are processed in memory and never stored.
 

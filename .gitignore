@@ -226,3 +226,5 @@ outputs/*
 # Cloudflare Worker dependencies and local state
 node_modules/
 .wrangler/
+videos/Demo.mp4
+videos/HB-pdf.mp4
