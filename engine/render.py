@@ -6,6 +6,7 @@ import hashlib
 import logging
 import math
 import random
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,11 +25,24 @@ class RenderReport:
 
     dropped: list[dict[str, Any]] = field(default_factory=list)
     errors: list[dict[str, Any]] = field(default_factory=list)
+    annotations_received: int = 0
+    quote_annotations: int = 0
+    quotes_matched: int = 0
 
     def metadata(self) -> dict[str, Any]:
+        quote_match_percent = (
+            round(self.quotes_matched * 100 / self.quote_annotations, 2)
+            if self.quote_annotations
+            else 100.0
+        )
         return {
+            "annotations_received": self.annotations_received,
+            "quote_annotations": self.quote_annotations,
+            "quotes_matched": self.quotes_matched,
+            "quote_match_percent": quote_match_percent,
             "dropped_count": len(self.dropped),
             "dropped": self.dropped,
+            "drop_reasons": dict(Counter(item["reason"] for item in self.dropped)),
             "error_count": len(self.errors),
             "errors": self.errors,
         }
@@ -61,6 +75,9 @@ def annotate_bytes(
                 _render_error(report, page, _kind(candidate), "validation_error")
                 continue
             clean["page"] = page
+            report.annotations_received += 1
+            if clean["type"] != "diagram":
+                report.quote_annotations += 1
             by_page.setdefault(page - 1, []).append(clean)
 
         for page_number, page_annotations in sorted(by_page.items()):
@@ -96,6 +113,7 @@ def _render_page(page, page_number, annotations, rng, report):
             if not rects:
                 _drop(report, page_number, kind, "unmatched_quote")
                 continue
+            report.quotes_matched += 1
             resolved.append((rects[0].y0, annotation, rects))
         except Exception as exc:
             _render_error(report, page_number, kind, _error_category(exc))
