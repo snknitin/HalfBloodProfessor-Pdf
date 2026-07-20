@@ -567,6 +567,10 @@ class PromptContractTests(unittest.TestCase):
         self.assertFalse(ANNOTATION_SCHEMA["additionalProperties"])
         variants = annotations["items"]["anyOf"]
         self.assertEqual(variants[0]["properties"]["quote"]["maxLength"], MAX_QUOTE_CHARS)
+        self.assertEqual(
+            variants[0]["properties"]["quote"]["pattern"],
+            r"^\S+(?:\s+\S+){2,7}$",
+        )
         self.assertEqual(variants[0]["properties"]["note"]["anyOf"][0]["maxLength"], MAX_NOTE_CHARS)
         self.assertEqual(variants[1]["properties"]["correction"]["maxLength"], MAX_CORRECTION_CHARS)
         diagram = variants[-1]["properties"]
@@ -595,6 +599,28 @@ class PromptContractTests(unittest.TestCase):
         self.assertLessEqual(len(clean[0]["note"]), MAX_NOTE_CHARS)
         self.assertLessEqual(len(clean[1]["title"]), MAX_DIAGRAM_TITLE_CHARS)
         self.assertTrue(all(len(label) <= MAX_DIAGRAM_LABEL_CHARS for label in clean[1]["labels"]))
+
+    def test_sanitizer_isolates_invalid_items_and_defaults_optional_fields(self):
+        payload = {
+            "annotations": [
+                {"type": "highlight", "quote": "too short"},
+                {
+                    "type": "underline",
+                    "quote": "three useful exact words",
+                    "note": "Worth remembering.",
+                },
+                {"type": "margin", "quote": "another exact useful phrase", "note": "Sharper framing."},
+            ]
+        }
+        clean = main._sanitize_annotations(payload)
+        self.assertEqual([item["type"] for item in clean], ["underline", "margin"])
+        self.assertFalse(clean[0]["double"])
+
+    def test_sanitizer_rejects_a_wholly_invalid_nonempty_page(self):
+        with self.assertRaises(ValueError):
+            main._sanitize_annotations(
+                {"annotations": [{"type": "highlight", "quote": "too short"}]}
+            )
 
 
 if __name__ == "__main__":

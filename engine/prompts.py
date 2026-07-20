@@ -8,7 +8,7 @@ from engine.validation import (
     MAX_QUOTE_CHARS,
 )
 
-PROMPT_VERSION = "b1-v2-reliability"
+PROMPT_VERSION = "b1-v3-quote-word-schema"
 
 SYSTEM_PROMPT = """You are a sharp, current expert annotating one textbook page in ink.
 
@@ -46,7 +46,15 @@ def _object(properties, required):
     }
 
 
-_QUOTE = {"type": "string", "minLength": 1, "maxLength": MAX_QUOTE_CHARS}
+_QUOTE = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": MAX_QUOTE_CHARS,
+    # Enforce the renderer contract at generation time. Previously the prompt
+    # requested 3-8 words but Structured Outputs allowed any word count, so one
+    # long quote could invalidate an otherwise useful page after generation.
+    "pattern": r"^\S+(?:\s+\S+){2,7}$",
+}
 _NOTE = {"type": "string", "minLength": 1, "maxLength": MAX_NOTE_CHARS}
 
 ANNOTATION_SCHEMA = {
