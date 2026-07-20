@@ -1,6 +1,14 @@
 """Prompt and Structured Outputs contract for per-page annotations."""
 
-PROMPT_VERSION = "b1-v1"
+from engine.validation import (
+    MAX_CORRECTION_CHARS,
+    MAX_DIAGRAM_LABEL_CHARS,
+    MAX_DIAGRAM_TITLE_CHARS,
+    MAX_NOTE_CHARS,
+    MAX_QUOTE_CHARS,
+)
+
+PROMPT_VERSION = "b1-v2-reliability"
 
 SYSTEM_PROMPT = """You are a sharp, current expert annotating one textbook page in ink.
 
@@ -38,8 +46,8 @@ def _object(properties, required):
     }
 
 
-_QUOTE = {"type": "string", "minLength": 1}
-_NOTE = {"type": "string", "minLength": 1}
+_QUOTE = {"type": "string", "minLength": 1, "maxLength": MAX_QUOTE_CHARS}
+_NOTE = {"type": "string", "minLength": 1, "maxLength": MAX_NOTE_CHARS}
 
 ANNOTATION_SCHEMA = {
     "type": "object",
@@ -62,7 +70,11 @@ ANNOTATION_SCHEMA = {
                         {
                             "type": {"type": "string", "const": "strike"},
                             "quote": _QUOTE,
-                            "correction": {"type": "string", "minLength": 1},
+                            "correction": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": MAX_CORRECTION_CHARS,
+                            },
                             "note": {"anyOf": [_NOTE, {"type": "null"}]},
                         },
                         ["type", "quote", "correction", "note"],
@@ -114,7 +126,11 @@ ANNOTATION_SCHEMA = {
                             "type": {"type": "string", "const": "diagram"},
                             "title": {
                                 "anyOf": [
-                                    {"type": "string", "minLength": 1},
+                                    {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": MAX_DIAGRAM_TITLE_CHARS,
+                                    },
                                     {"type": "null"},
                                 ]
                             },
@@ -122,7 +138,11 @@ ANNOTATION_SCHEMA = {
                                 "type": "array",
                                 "minItems": 2,
                                 "maxItems": 5,
-                                "items": {"type": "string", "minLength": 1},
+                                "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": MAX_DIAGRAM_LABEL_CHARS,
+                                },
                             },
                         },
                         ["type", "title", "labels"],
