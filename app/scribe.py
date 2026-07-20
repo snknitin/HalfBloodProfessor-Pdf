@@ -9,7 +9,14 @@ NOTE_FONT = os.path.join(FONTS, "Caveat.ttf")
 SCRAWL_FONT = os.path.join(FONTS, "HomemadeApple-Regular.ttf")
 
 INK = (0.14, 0.12, 0.10)
+INK_BLUE = (0.08, 0.24, 0.48)
+INK_RED = (0.62, 0.10, 0.12)
+INK_GREEN = (0.08, 0.38, 0.28)
+INK_PURPLE = (0.36, 0.16, 0.48)
 HIGHLIGHT = (1.0, 0.83, 0.25)
+HIGHLIGHT_BLUE = (0.42, 0.72, 0.95)
+HIGHLIGHT_GREEN = (0.55, 0.82, 0.52)
+HIGHLIGHT_ROSE = (0.96, 0.58, 0.63)
 
 _note_font = fitz.Font(fontfile=NOTE_FONT)
 _scrawl_font = fitz.Font(fontfile=SCRAWL_FONT)
@@ -41,20 +48,20 @@ def _stroke(shape, pts, rng, width=1.1, color=INK, close=False):
                  stroke_opacity=rng.uniform(0.82, 0.95), closePath=close)
 
 
-def strike(shape, rect, rng):
+def strike(shape, rect, rng, color=INK):
     y = rect.y0 + rect.height * rng.uniform(0.5, 0.6)
     tilt = rng.uniform(-1.2, 1.2)
-    _stroke(shape, _wavy((rect.x0 - 2, y - tilt), (rect.x1 + 2, y + tilt), rng, amp=0.9), rng)
+    _stroke(shape, _wavy((rect.x0 - 2, y - tilt), (rect.x1 + 2, y + tilt), rng, amp=0.9), rng, color=color)
 
 
-def underline(shape, rect, rng, double=False):
+def underline(shape, rect, rng, double=False, color=INK):
     y = rect.y1 + 1.2
-    _stroke(shape, _wavy((rect.x0 - 1, y), (rect.x1 + 1, y), rng, amp=0.8), rng)
+    _stroke(shape, _wavy((rect.x0 - 1, y), (rect.x1 + 1, y), rng, amp=0.8), rng, color=color)
     if double:
-        _stroke(shape, _wavy((rect.x0 + 1, y + 2.2), (rect.x1 - 1, y + 2.2), rng, amp=0.8), rng)
+        _stroke(shape, _wavy((rect.x0 + 1, y + 2.2), (rect.x1 - 1, y + 2.2), rng, amp=0.8), rng, color=color)
 
 
-def circle(shape, rect, rng):
+def circle(shape, rect, rng, color=INK):
     """Two overlapping imperfect ellipse passes = hand-drawn loop."""
     cx, cy = rect.x0 + rect.width / 2, rect.y0 + rect.height / 2
     rx, ry = rect.width / 2 + 5, rect.height / 2 + 4
@@ -67,10 +74,10 @@ def circle(shape, rect, rng):
             a = start + math.tau * (i / n) * rng.uniform(0.99, 1.03)
             w = wob_r + math.sin(a * 2 + start) * 0.06 + rng.uniform(-0.03, 0.03)
             pts.append(fitz.Point(cx + math.cos(a) * rx * w, cy + math.sin(a) * ry * w))
-        _stroke(shape, pts, rng, width=1.0)
+        _stroke(shape, pts, rng, width=1.0, color=color)
 
 
-def arrow(shape, src, dst, rng):
+def arrow(shape, src, dst, rng, color=INK):
     src, dst = fitz.Point(src), fitz.Point(dst)
     mid = (src + dst) / 2
     d = dst - src
@@ -83,7 +90,7 @@ def arrow(shape, src, dst, rng):
         t = i / 16
         p = src * (1 - t) ** 2 + ctrl * 2 * t * (1 - t) + dst * t ** 2
         pts.append(p)
-    _stroke(shape, pts, rng, width=1.0)
+    _stroke(shape, pts, rng, width=1.0, color=color)
     # head: two barbs off the final direction
     fd = pts[-1] - pts[-3]
     fl = max(abs(fd), 0.1)
@@ -91,19 +98,19 @@ def arrow(shape, src, dst, rng):
     for sign in (1, -1):
         bx = -ux * 6 + sign * -uy * 3.2
         by = -uy * 6 + sign * ux * 3.2
-        _stroke(shape, [dst, fitz.Point(dst.x + bx, dst.y + by)], rng, width=1.0)
+        _stroke(shape, [dst, fitz.Point(dst.x + bx, dst.y + by)], rng, width=1.0, color=color)
 
 
-def highlight(shape, rect, rng):
+def highlight(shape, rect, rng, color=HIGHLIGHT):
     r = rect + (-1.5, -1, 1.5, 1)
     j = lambda: rng.uniform(-1.2, 1.2)
     quad = [fitz.Point(r.x0 + j(), r.y0 + j()), fitz.Point(r.x1 + j(), r.y0 + j()),
             fitz.Point(r.x1 + j(), r.y1 + j()), fitz.Point(r.x0 + j(), r.y1 + j())]
     shape.draw_polyline(quad)
-    shape.finish(color=None, fill=HIGHLIGHT, fill_opacity=0.32, closePath=True)
+    shape.finish(color=None, fill=color, fill_opacity=0.30, closePath=True)
 
 
-def scribble(shape, rect, rng):
+def scribble(shape, rect, rng, color=INK):
     """Loose zigzag over a passage — dismissive but still legible underneath."""
     for slant in (1, -1):
         pts, x = [], rect.x0
@@ -113,10 +120,10 @@ def scribble(shape, rect, rng):
             pts.append(fitz.Point(x + rng.uniform(-1, 1), (top if up else bot) + rng.uniform(-1, 1)))
             up = not up
             x += rng.uniform(5, 9)
-        _stroke(shape, pts, rng, width=0.9)
+        _stroke(shape, pts, rng, width=0.9, color=color)
 
 
-def doodle(shape, center, rng, symbol="star", size=5.0):
+def doodle(shape, center, rng, symbol="star", size=5.0, color=INK):
     cx, cy = center
     if symbol == "star":
         pts = []
@@ -125,16 +132,16 @@ def doodle(shape, center, rng, symbol="star", size=5.0):
             a = rot + math.tau * i / 10
             r = size if i % 2 == 0 else size * 0.45
             pts.append(fitz.Point(cx + math.cos(a) * r, cy + math.sin(a) * r))
-        _stroke(shape, pts, rng, width=0.9, close=True)
+        _stroke(shape, pts, rng, width=0.9, color=color, close=True)
     elif symbol == "asterisk":
         for k in range(3):
             a = math.pi * k / 3 + rng.uniform(-0.1, 0.1)
             dx, dy = math.cos(a) * size, math.sin(a) * size
-            _stroke(shape, _wavy((cx - dx, cy - dy), (cx + dx, cy + dy), rng, amp=0.4, step=4), rng, width=0.9)
+            _stroke(shape, _wavy((cx - dx, cy - dy), (cx + dx, cy + dy), rng, amp=0.4, step=4), rng, width=0.9, color=color)
     elif symbol == "exclaim":
-        _stroke(shape, _wavy((cx, cy - size), (cx, cy + size * 0.5), rng, amp=0.4, step=3), rng, width=1.2)
+        _stroke(shape, _wavy((cx, cy - size), (cx, cy + size * 0.5), rng, amp=0.4, step=3), rng, width=1.2, color=color)
         shape.draw_circle(fitz.Point(cx, cy + size + 1.5), 0.9)
-        shape.finish(color=INK, fill=INK, stroke_opacity=0.9, fill_opacity=0.9)
+        shape.finish(color=color, fill=color, stroke_opacity=0.9, fill_opacity=0.9)
 
 
 def _wrap_lines(font, text, fontsize, width):
@@ -156,7 +163,7 @@ def note_height(text, width, fontsize=10.5):
     return len(_wrap_lines(_note_font, text, fontsize, width)) * fontsize * 1.12 + 6
 
 
-def note_text(page, box, text, rng, fontsize=10.5, fontfile=NOTE_FONT, fontname="Caveat"):
+def note_text(page, box, text, rng, fontsize=10.5, fontfile=NOTE_FONT, fontname="Caveat", color=INK):
     """Handwritten note wrapped into box, slightly rotated. Returns rect actually used, or None."""
     font = _note_font if fontfile == NOTE_FONT else _scrawl_font
     fs = fontsize
@@ -175,14 +182,14 @@ def note_text(page, box, text, rng, fontsize=10.5, fontfile=NOTE_FONT, fontname=
     for ln in lines:
         page.insert_text(fitz.Point(box.x0 + rng.uniform(-0.8, 0.8), y), ln,
                          fontname=fontname, fontfile=fontfile, fontsize=fs,
-                         color=INK, morph=(pivot, m))
+                         color=color, morph=(pivot, m))
         y += fs * 1.12
         if y > box.y1:
             break
     return used
 
 
-def correction_text(page, anchor_rect, text, rng, page_rect=None):
+def correction_text(page, anchor_rect, text, rng, page_rect=None, color=INK_RED):
     """Scrawl a correction near its strike.
 
     ``page_rect`` is optional so the original Track A call remains unchanged.  The
@@ -216,7 +223,7 @@ def correction_text(page, anchor_rect, text, rng, page_rect=None):
         else:
             return None
         box = fitz.Rect(x0, y0, x0 + width, y0 + height)
-    return note_text(page, box, text, rng, fontsize=fs, fontfile=SCRAWL_FONT, fontname="HomemadeApple")
+    return note_text(page, box, text, rng, fontsize=fs, fontfile=SCRAWL_FONT, fontname="HomemadeApple", color=color)
 
 
 def diagram_height(labels, title=None, fs=9.5):
@@ -224,7 +231,7 @@ def diagram_height(labels, title=None, fs=9.5):
     return len(labels) * (fs * 1.9 + 15) + (16 if title else 0)
 
 
-def chain_diagram(page, shape, area, labels, rng, title=None):
+def chain_diagram(page, shape, area, labels, rng, title=None, color=INK_BLUE):
     """Hand-drawn chain of bubbled labels joined by arrows.
 
     Horizontal row if the area is wide, vertical column (margin marginalia style) if tall.
@@ -243,20 +250,20 @@ def chain_diagram(page, shape, area, labels, rng, title=None):
         for t, w in zip(labels, widths):
             h = fs * 1.9
             r = fitz.Rect(x, cy - h / 2, x + w, cy + h / 2)
-            circle(shape, r + (2, 2, -2, -2), rng)
-            note_text(page, fitz.Rect(r.x0 + 6, r.y0 + h * 0.18, r.x1 + 10, r.y1 + 4), t, rng, fontsize=fs)
+            circle(shape, r + (2, 2, -2, -2), rng, color=color)
+            note_text(page, fitz.Rect(r.x0 + 6, r.y0 + h * 0.18, r.x1 + 10, r.y1 + 4), t, rng, fontsize=fs, color=color)
             if prev_edge is not None:
                 arrow(shape, (prev_edge + 3, cy + rng.uniform(-1.5, 1.5)),
-                      (r.x0 - 8, cy + rng.uniform(-1.5, 1.5)), rng)
+                      (r.x0 - 8, cy + rng.uniform(-1.5, 1.5)), rng, color=color)
             prev_edge = r.x1 + 4
             x = r.x1 + gap
         if title:
-            note_text(page, fitz.Rect(area.x0 + 10, area.y0 - 2, area.x1, area.y0 + 14), title, rng, fontsize=9.5)
+            note_text(page, fitz.Rect(area.x0 + 10, area.y0 - 2, area.x1, area.y0 + 14), title, rng, fontsize=9.5, color=color)
     else:
         fs = 9.5
         y = area.y0
         if title:
-            note_text(page, fitz.Rect(area.x0, y, area.x1, y + 15), title, rng, fontsize=fs)
+            note_text(page, fitz.Rect(area.x0, y, area.x1, y + 15), title, rng, fontsize=fs, color=color)
             y += 16
         prev_bottom = None
         cx = area.x0 + area.width / 2
@@ -264,10 +271,39 @@ def chain_diagram(page, shape, area, labels, rng, title=None):
             h = fs * 1.9
             w = min(area.width - 4, _note_font.text_length(t, fs) + 14)
             r = fitz.Rect(cx - w / 2, y, cx + w / 2, y + h)
-            circle(shape, r + (2, 2, -2, -2), rng)
-            note_text(page, fitz.Rect(r.x0 + 6, r.y0 + h * 0.18, r.x1 + 10, r.y1 + 4), t, rng, fontsize=fs)
+            circle(shape, r + (2, 2, -2, -2), rng, color=color)
+            note_text(page, fitz.Rect(r.x0 + 6, r.y0 + h * 0.18, r.x1 + 10, r.y1 + 4), t, rng, fontsize=fs, color=color)
             if prev_bottom is not None:
                 arrow(shape, (cx + rng.uniform(-2, 2), prev_bottom + 2),
-                      (cx + rng.uniform(-2, 2), r.y0 - 3), rng)
+                      (cx + rng.uniform(-2, 2), r.y0 - 3), rng, color=color)
             prev_bottom = r.y1
             y = r.y1 + 15
+
+
+def blank_page_doodle(page, shape, bounds, rng, color=INK_BLUE):
+    """A tiny zero-token easter egg for genuinely blank interior pages."""
+    size = min(54.0, max(34.0, bounds.width * 0.09))
+    x1 = bounds.x1 - 24
+    y1 = bounds.y1 - 28
+    x0 = x1 - size
+    y0 = y1 - size * 0.55
+    mid = (x0 + x1) / 2
+    # Open book: two imperfect page leaves and a central spine.
+    left = [
+        fitz.Point(x0, y0 + 5),
+        fitz.Point(mid - 2, y0),
+        fitz.Point(mid - 2, y1),
+        fitz.Point(x0, y1 - 5),
+        fitz.Point(x0, y0 + 5),
+    ]
+    right = [
+        fitz.Point(mid + 2, y0),
+        fitz.Point(x1, y0 + 5),
+        fitz.Point(x1, y1 - 5),
+        fitz.Point(mid + 2, y1),
+        fitz.Point(mid + 2, y0),
+    ]
+    _stroke(shape, left, rng, width=0.9, color=color)
+    _stroke(shape, right, rng, width=0.9, color=color)
+    _stroke(shape, _wavy((mid, y0 + 1), (mid, y1 - 1), rng, amp=0.35, step=4), rng, width=0.8, color=color)
+    doodle(shape, (x0 - 8, y0 - 5), rng, "star", size=4.0, color=color)

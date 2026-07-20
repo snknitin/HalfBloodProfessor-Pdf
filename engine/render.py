@@ -28,6 +28,7 @@ class RenderReport:
     annotations_received: int = 0
     quote_annotations: int = 0
     quotes_matched: int = 0
+    blank_page_doodles: int = 0
 
     def metadata(self) -> dict[str, Any]:
         quote_match_percent = (
@@ -45,6 +46,7 @@ class RenderReport:
             "drop_reasons": dict(Counter(item["reason"] for item in self.dropped)),
             "error_count": len(self.errors),
             "errors": self.errors,
+            "blank_page_doodles": self.blank_page_doodles,
         }
 
 
@@ -87,6 +89,8 @@ def annotate_bytes(
                 category = _error_category(exc)
                 _render_error(report, page_number + 1, "page", category)
 
+        _decorate_blank_interior_pages(doc, rng, report)
+
         rendered = doc.tobytes(garbage=3, deflate=True, no_new_id=True)
         return rendered, report
     finally:
@@ -103,7 +107,8 @@ def _render_page(page, page_number, annotations, rng, report):
         kind = annotation["type"]
         try:
             if kind == "diagram":
-                resolved.append((float("inf"), annotation, None))
+                # Reserve scarce margin/bottom space before notes consume it.
+                resolved.append((float("-inf"), annotation, None))
                 continue
             rects = [
                 rect
@@ -130,12 +135,15 @@ def _render_page(page, page_number, annotations, rng, report):
 def _render_one(page, bounds, margins, annotation, rects, rng, report):
     page_number = page.number + 1
     kind = annotation["type"]
+    color = _annotation_color(kind, rng)
     shape = page.new_shape()  # never share partially-built drawing commands
 
     if kind == "diagram":
         area = _clamp_rect(margins.bottom, bounds, 10)
+        diagram_side = "bottom"
         if area is None or area.height < 55:
             side, side_box = margins.side_box()
+            diagram_side = side
             box = _clamp_rect(side_box, bounds, 10)
             needed = scribe.diagram_height(annotation["labels"], annotation.get("title"))
             if box is None:
@@ -151,38 +159,40 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
             _drop(report, page_number, kind, "unsafe_geometry")
             return
         scribe.chain_diagram(
-            page, shape, area, annotation["labels"], rng, annotation.get("title")
+            page, shape, area, annotation["labels"], rng, annotation.get("title"), color=color
         )
+        if diagram_side == "bottom":
+            margins.commit("bottom", area.y1)
         shape.commit()
         return
 
     first = rects[0]
     if kind == "strike":
         for rect in rects:
-            scribe.strike(shape, rect, rng)
+            scribe.strike(shape, rect, rng, color=color)
         correction = scribe.correction_text(
-            page, first, annotation["correction"], rng, page_rect=bounds
+            page, first, annotation["correction"], rng, page_rect=bounds, color=color
         )
         if correction is None:
             _drop(report, page_number, "correction", "no_space")
     elif kind == "underline":
         for rect in rects:
-            scribe.underline(shape, rect, rng, double=annotation.get("double", False))
+            scribe.underline(shape, rect, rng, double=annotation.get("double", False), color=color)
     elif kind == "circle":
-        scribe.circle(shape, first, rng)
+        scribe.circle(shape, first, rng, color=color)
     elif kind == "highlight":
         for rect in rects:
-            scribe.highlight(shape, rect, rng)
+            scribe.highlight(shape, rect, rng, color=color)
     elif kind == "scribble":
         for rect in rects:
-            scribe.scribble(shape, rect, rng)
+            scribe.scribble(shape, rect, rng, color=color)
     elif kind == "doodle":
         center = _clamp_point(
             (margins.gutter_x(first), first.y0 + first.height / 2), bounds, 8
         )
-        scribe.doodle(shape, center, rng, annotation["symbol"])
+        scribe.doodle(shape, center, rng, annotation["symbol"], color=color)
     elif kind == "margin":
-        scribe.underline(shape, first, rng)
+        scribe.underline(shape, first, rng, color=color)
 
     note = annotation.get("note")
     if note:
@@ -191,7 +201,7 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
         if box is None or box.width < 12 or box.height < 8:
             _drop(report, page_number, "note", "no_space")
         else:
-            used = scribe.note_text(page, box, note, rng)
+            used = scribe.note_text(page, box, note, rng, color=color)
             if used is not None:
                 used = _clamp_rect(used, bounds, 3)
             if used is None:
@@ -202,14 +212,42 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
                     if side == "left":
                         src = (used.x1 - 2, used.y0 + 6)
                         dst = (first.x0 - 7, first.y0 + first.height / 2)
-                    else:
+                    elif side == "right":
                         src = (used.x0 + 2, used.y0 + 6)
                         dst = (first.x1 + 7, first.y0 + first.height / 2)
+                    else:
+                        src = (used.x0 + used.width / 2, used.y0 + 1)
+                        dst = (first.x0 + first.width / 2, first.y1 + 5)
                     src = _clamp_point(src, bounds, 3)
                     dst = _clamp_point(dst, bounds, 3)
                     if abs(dst[0] - src[0]) < 300:
-                        scribe.arrow(shape, src, dst, rng)
+                        scribe.arrow(shape, src, dst, rng, color=color)
     shape.commit()
+
+
+def _annotation_color(kind: str, rng):
+    if kind == "strike":
+        return scribe.INK_RED
+    if kind == "highlight":
+        return rng.choice(
+            [scribe.HIGHLIGHT, scribe.HIGHLIGHT_BLUE, scribe.HIGHLIGHT_GREEN, scribe.HIGHLIGHT_ROSE]
+        )
+    if kind == "diagram":
+        return scribe.INK_BLUE
+    return rng.choice([scribe.INK, scribe.INK_BLUE, scribe.INK_GREEN, scribe.INK_PURPLE])
+
+
+def _decorate_blank_interior_pages(doc, rng, report: RenderReport) -> None:
+    for index in range(1, max(1, doc.page_count - 1)):
+        page = doc[index]
+        if page.get_text("text").strip():
+            continue
+        if page.get_images(full=True) or page.get_drawings():
+            continue
+        shape = page.new_shape()
+        scribe.blank_page_doodle(page, shape, fitz.Rect(page.rect), rng)
+        shape.commit()
+        report.blank_page_doodles += 1
 
 
 def _clamp_margins(margins: Margins, bounds: fitz.Rect) -> None:
@@ -218,6 +256,7 @@ def _clamp_margins(margins: Margins, bounds: fitz.Rect) -> None:
         setattr(margins, name, rect or fitz.Rect(bounds.x0, bounds.y0, bounds.x0, bounds.y0))
     margins.cursor["left"] = margins.left.y0
     margins.cursor["right"] = margins.right.y0
+    margins.cursor["bottom"] = margins.bottom.y0
 
 
 def _clamp_rect(rect, bounds: fitz.Rect, padding: float = 0) -> fitz.Rect | None:

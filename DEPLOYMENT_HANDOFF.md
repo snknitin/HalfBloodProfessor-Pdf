@@ -26,7 +26,7 @@ The no-payment production path is active: Higgsfield hosts the UI and server pro
 
 - `engine/main.py`: FastAPI `/annotate` and `/healthz`.
 - Raw PDF and SSE response modes.
-- Tier-aware 50/150-page and 25/100 MB chapter validation.
+- Tier-aware 50/150-page and 20/50 MB chapter validation.
 - Scanned/non-searchable PDF rejection.
 - Concurrent per-page OpenAI Responses API calls.
 - Strict structured-output annotation schema.
@@ -35,7 +35,7 @@ The no-payment production path is active: Higgsfield hosts the UI and server pro
 - In-memory and optional KV annotation cache.
 - Shared-secret authentication with `X-HB-Auth`.
 - Cloudflare Worker, Durable Object/Container wrapper, Dockerfile, KV binding, and Wrangler config.
-- Twenty-five engine tests pass.
+- Thirty-four engine tests pass.
 - Wrangler dry-run and Docker image build pass.
 
 Root GitHub repository:
@@ -55,7 +55,7 @@ Root GitHub repository:
 - Original public sample PDF.
 - Turnstile client widget.
 - `/api/annotate` server route.
-- Hashed-IP KV rate-limit code for five documents/day plus paid access-key quotas.
+- Hashed-IP KV rate-limit code for three documents/day plus paid access-key quotas.
 - SSE progress UI, PDF preview, and download UI.
 - Required legal/privacy footer text.
 - Friendly limit, scanned-PDF, and rate-limit errors.
@@ -210,7 +210,7 @@ Do not translate `engine/main.py` into an ordinary Worker during a timed deploym
 ### B3 website follow-up
 
 - Complete one user-PDF round-trip from another device/phone.
-- Confirm the deployed site KV binding increments the five/day counter.
+- Confirm the deployed site KV binding increments the three/day counter.
 - Connect a PostHog project; capture hooks exist but no project is configured.
 
 ### B4 operations checklist
@@ -218,7 +218,7 @@ Do not translate `engine/main.py` into an ordinary Worker during a timed deploym
 - Confirm both KV bindings: engine cache and site rate limit.
 - Warm the bundled sample once and verify cache reuse.
 - Configure PostHog and verify the five specified events without filenames or content.
-- Test real 25 MB free and 100 MB Teacher's Pet requests end to end.
+- Test real 20 MB free and 50 MB Teacher's Pet requests end to end.
 - Verify a request timeout of at least 60 seconds.
 - Put `tests/test_engine.py` and `tests/test_smoke.py` into CI.
 

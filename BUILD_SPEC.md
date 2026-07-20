@@ -82,8 +82,8 @@ Prompt rules that keep the deterministic side safe (enforce in the system prompt
   The only persisted data: LLM response cache and rate-limit counters in Workers KV
   (content = annotation JSON keyed by hash, never the text itself), and PostHog events.
 - **Limits:** digital-text PDFs only (empty extraction → friendly rejection, no OCR).
-  Free: ≤ 50 pages, ≤ 25 MB, 5 docs/IP/day. Teacher's Pet (monthly): ≤ 150 pages,
-  ≤ 100 MB, 10/day, 100/month. Professor's Pass (one-time whole book): one document,
+  Free: ≤ 50 pages, ≤ 20 MB, 3 docs/IP/day. Teacher's Pet (monthly): ≤ 150 pages,
+  ≤ 50 MB, 10/day, 100/month. Professor's Pass (one-time whole book): one document,
   ≤ 1,000 pages, ≤ 150 MB. Full tier design in **B6**.
 
 ### B1. Engine service (`engine/`)
@@ -227,8 +227,8 @@ remain an optional future migration (Workers Paid plan) and are NOT required for
 
 | | Free ("Study Hall") | Teacher's Pet — $5/30 days ($40/yr) | Professor's Pass — $3.99 one-time |
 |---|---|---|---|
-| What you get | 5 docs/day | 10 docs/day, 100/month | **one whole book, once** |
-| Max file size | 25 MB | 100 MB | 150 MB |
+| What you get | 3 docs/day | 10 docs/day, 100/month | **one whole book, once** |
+| Max file size | 20 MB | 50 MB | 150 MB |
 | Max pages | 50 | 150 | 1,000 |
 | Model | same for all tiers (`HB_MODEL`) | same | same |
 | Priority | queued behind paid when busy | admitted first | admitted first; one active book per engine at a time |
@@ -245,7 +245,7 @@ the same-model-everywhere decision is a cost decision, not just a simplicity one
 | Scenario | Cost |
 |---|---:|
 | Free doc, worst case (50 p, mini) | ~$0.08 |
-| Free user, maxed month (5/day × 50 p) | ~$12 — acceptable abuse ceiling, Turnstile-gated |
+| Free user, maxed month (3/day × 50 p) | ~$7.20 — Turnstile-gated abuse ceiling |
 | Teacher's Pet doc, worst case (150 p, mini) | ~$0.23 |
 | Teacher's Pet, maxed month (100 docs × 150 p) | ~$23 |
 | Teacher's Pet, realistic month (10–20 docs) | ~$2.30–4.60 |
@@ -345,19 +345,19 @@ When this is eventually picked up:
    settings). If yes: CNAME `hb-pdf.app` → the Higgsfield site, done.
 3. If not: put the domain on Cloudflare (free) and run a **thin reverse-proxy Worker** on
    `hb-pdf.app` that forwards everything to `hb-pdf.higgsfield.app` (free Workers proxy
-   fine; SSE streams through). Note: Cloudflare's ~100 MB request-body limit sits exactly
-   at the paid file cap — test a real 100 MB upload through the proxy, or set the paid cap
-   to 95 MB for headroom.
+   fine; SSE streams through). Note: Cloudflare's ~100 MB request-body limit is below the
+   150 MB whole-book cap, so Professor's Pass uploads must keep using the direct engine
+   path.
 4. Either way: add `hb-pdf.app` to the Turnstile widget's allowed hostnames, update
    PostHog's allowed origin, and keep the higgsfield.app URL as a redirect.
 
 #### B6 acceptance
 
-- Free flow unchanged except new limits (25 MB / 5-per-day / 50 pages).
+- Free flow unchanged except new limits (20 MB / 3-per-day / 50 pages).
 - Buying each product end-to-end in Stripe test mode: pay → key shown → key pastes on a
   second device → tier limits apply → Teacher's Pet expires after 30 days with a friendly
   renew message → Professor's Pass credit survives a failed run, is consumed on success.
-- A real ~100 MB / 150-page Teacher's Pet doc and a ~400-page book round-trip (memory-test
+- A real ~50 MB / 150-page Teacher's Pet doc and a ~400-page book round-trip (memory-test
   the HF Space — 1 GB RAM with a large PDF plus render copies is the risk, not cost).
 - Book result: re-downloadable with the key within 24 h; gone (verified) after TTL.
 - Quota counters: free per hashed IP, paid per key, monthly ceiling enforced.
@@ -412,10 +412,10 @@ passes; failures appear in SSE progress and final metadata.
 *Done when:* the full matrix runs green against the locally-run engine, including the
 cache-hit repeat and two-concurrent-documents cases.
 
-**Task 3 — Tiers, keys, and quotas** (B6, no payments yet): free limits 25 MB / 5-day /
+**Task 3 — Tiers, keys, and quotas** (B6, no payments yet): free limits 20 MB / 3-day /
 50 pages; access-key model in KV (mint, verify, expire, counters); tier-aware
 `/api/annotate` route; a dev-only key-minting script in `dev/` for testing paid flows.
-*Done when:* a dev-minted Teacher's Pet key gets 150 p/100 MB/10-day limits on a second
+*Done when:* a dev-minted Teacher's Pet key gets 150 p/50 MB/10-day limits on a second
 device, and expiry produces the friendly renew message.
 
 **Task 4 — Professor's Pass book pipeline** (B6): chapter-aware chunking via `get_toc()`
@@ -430,7 +430,7 @@ disconnect still allows re-download; a forced failure preserves the credit; a
 
 **Task 5 — Stripe** (B6, only after Tasks 1–4): two Payment Links (three price points:
 $5/30-day, $40/365-day, $3.99/book), success-page session verification, idempotent key
-minting, BuyMeACoffee as a no-entitlement tip button, footer legal/refund line.
+minting, BuyMeACoffee as a no-entitlement tip button, footer payment-policy line.
 *Done when:* the full B6 acceptance list passes in Stripe test mode.
 
 **Deferred, do not pick up:** custom domain (`hb-pdf.app`), OCR/scanned PDFs, model
@@ -456,7 +456,7 @@ B2, B3, B4) — one phase per session, run its acceptance criteria before moving
 | Hallucinated corrections | UI disclaimer; prompt favors hedged phrasing; brand as study companion, not fact-checker |
 | Film stills on the public site | Never — design reference only; generate original assets |
 | API key/secret leakage | Key only in engine secrets; site→engine authed by shared secret; nothing client-side |
-| Cost abuse | Turnstile + tiered quotas (free 5/day/IP, pass 10/day + 100/mo per key) + page caps + per-page cache |
+| Cost abuse | Turnstile + tiered quotas (free 3/day/IP, pass 10/day + 100/mo per key) + page caps + per-page cache |
 | Key leak / sharing | A shared key burns its own quota — self-limiting; no fingerprinting needed |
 | Whale pass holders | Monthly ceiling (100 docs) bounds worst case at ~$23/user/mo; telemetry decides if pricing moves |
 | Big book OOMs the 1 GB Space | Sequential chapter chunks + 150 MB / 1,000-page caps + memory test in B6 acceptance; upgrade the Space instance with first revenue |

@@ -44,7 +44,11 @@ class Margins:
         self.left = fitz.Rect(10, 52, self.minx - 8, pr.height - 30)
         self.right = fitz.Rect(self.maxx + 8, 52, pr.width - 10, pr.height - 30)
         self.bottom = fitz.Rect(self.minx, maxy + 12, self.maxx, pr.height - 24)
-        self.cursor = {"left": self.left.y0, "right": self.right.y0}
+        self.cursor = {
+            "left": self.left.y0,
+            "right": self.right.y0,
+            "bottom": self.bottom.y0,
+        }
 
     def side_box(self):
         side = "left" if self.left.width >= self.right.width else "right"
@@ -52,21 +56,32 @@ class Margins:
 
     def place(self, y, text):
         """Reserve a rect for `text` near anchor y. Caller must commit() the rect actually used."""
-        side, box = self.side_box()
-        if box.width < 48:  # ponytail: no margin, no note — dropping beats overlapping print
-            return None, side
-        h = scribe.note_height(text, box.width - 4)
-        y0 = max(y - 4, self.cursor[side])
-        if y0 + h > box.y1:
-            return None, side
-        return fitz.Rect(box.x0 + 2, y0, box.x1 - 2, y0 + h + 4), side
+        candidates = []
+        for side, box in (("left", self.left), ("right", self.right)):
+            if box.width < 48:
+                continue
+            h = scribe.note_height(text, box.width - 4)
+            y0 = max(y - 4, self.cursor[side])
+            if y0 + h <= box.y1:
+                candidates.append((abs(y0 - y), -box.width, side, box, y0, h))
+        if candidates:
+            _, _, side, box, y0, h = min(candidates)
+            return fitz.Rect(box.x0 + 2, y0, box.x1 - 2, y0 + h + 4), side
+
+        box = self.bottom
+        if box.width >= 96 and box.height >= 18:
+            h = scribe.note_height(text, box.width - 8)
+            y0 = self.cursor["bottom"]
+            if y0 + h <= box.y1:
+                return fitz.Rect(box.x0 + 4, y0, box.x1 - 4, y0 + h + 4), "bottom"
+        return None, "left"
 
     def commit(self, side, y1):
         self.cursor[side] = max(self.cursor[side], y1 + 9)
 
     def gutter_x(self, quote_rect):
         """x for a doodle: the strip between margin and text, nearest usable side."""
-        if self.left.width >= 22:
+        if self.left.width >= 22 and self.left.width >= self.right.width:
             return self.minx - 11
         return self.maxx + 11
 
@@ -148,9 +163,12 @@ def annotate(pdf_path, annotations, out_path, keep_pages=None):
                     if side == "left":
                         src = (used.x1 - 2, used.y0 + 6)
                         dst = (first.x0 - 7, first.y0 + first.height / 2)
-                    else:
+                    elif side == "right":
                         src = (used.x0 + 2, used.y0 + 6)
                         dst = (first.x1 + 7, first.y0 + first.height / 2)
+                    else:
+                        src = (used.x0 + used.width / 2, used.y0 + 1)
+                        dst = (first.x0 + first.width / 2, first.y1 + 5)
                     if abs(dst[0] - src[0]) < 300:  # a page-crossing arrow reads as a strike
                         scribe.arrow(shape, src, dst, rng)
         shape.commit()
