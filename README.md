@@ -90,5 +90,7 @@ See [engine/README.md](engine/README.md) for the service commands and
 - [x] Turnstile widget and server verification path
 - [x] KV daily rate-limit path
 - [x] Public website deployment
-- [x] Full local B7 matrix, including 150-page and 400-page cases
-- [ ] Add Stripe test secret and three Payment Link URLs, then run test checkouts
+- [x] Full local and deployed B7 matrices, including 150-page and 400-page cases
+- [x] Three one-time Stripe test products and Payment Links with success redirects
+- [ ] Add the Stripe test secret to Higgsfield and run all three test checkouts
+- [ ] Add the optional Buy Me a Coffee profile URL
