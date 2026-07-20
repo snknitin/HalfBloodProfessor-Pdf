@@ -182,8 +182,12 @@ def note_text(page, box, text, rng, fontsize=10.5, fontfile=NOTE_FONT, fontname=
     return used
 
 
-def correction_text(page, anchor_rect, text, rng):
-    """Scrawled correction just above (or below) a struck-out phrase. Overlapping print is authentic."""
+def correction_text(page, anchor_rect, text, rng, page_rect=None):
+    """Scrawl a correction near its strike.
+
+    ``page_rect`` is optional so the original Track A call remains unchanged.  The
+    service supplies it to constrain model-generated corrections to the page.
+    """
     fs = max(7.5, min(11.0, anchor_rect.height * 0.85))
     w = _scrawl_font.text_length(text, fs) + 6
     x0 = max(20, anchor_rect.x0 - 4)
@@ -191,6 +195,27 @@ def correction_text(page, anchor_rect, text, rng):
     if y0 < 36:
         y0 = anchor_rect.y1 + 2
     box = fitz.Rect(x0, y0, x0 + w, y0 + fs * 1.6)
+
+    if page_rect is not None:
+        bounds = fitz.Rect(page_rect)
+        # Rotation can move the far edge by ~22 pt on a full-width page.  Keep
+        # enough inset that a clamped box remains clamped after the hand tilt.
+        inset = fitz.Rect(bounds.x0 + 24, bounds.y0 + 24, bounds.x1 - 24, bounds.y1 - 24)
+        if inset.width < 36 or inset.height < fs * 1.6:
+            return None
+        x0 = min(max(anchor_rect.x0 - 4, inset.x0), inset.x1 - 36)
+        width = min(max(36, w), inset.x1 - x0)
+        lines = _wrap_lines(_scrawl_font, text, fs, width)
+        height = max(fs * 1.6, len(lines) * fs * 1.12 + 4)
+        above = anchor_rect.y0 - height - 2
+        below = anchor_rect.y1 + 2
+        if above >= inset.y0:
+            y0 = above
+        elif below + height <= inset.y1:
+            y0 = below
+        else:
+            return None
+        box = fitz.Rect(x0, y0, x0 + width, y0 + height)
     return note_text(page, box, text, rng, fontsize=fs, fontfile=SCRAWL_FONT, fontname="HomemadeApple")
 
 

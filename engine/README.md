@@ -34,7 +34,15 @@ curl.exe -X POST http://localhost:8080/annotate `
 ```
 
 Add `?stream=1` for SSE progress. The final `done` event contains the result in
-`pdf_base64`.
+`pdf_base64` plus content-free processing metadata. Page progress identifies
+`success`, `valid_empty`, `skipped`, `failed`, and `timed_out` results. Plain PDF
+responses expose the compact form of the same data in `X-HB-Metadata`.
+
+Operational failures are never cached. A document may finish with a small number
+of failed pages (reported in metadata), but fails clearly instead of returning a
+misleading partial result when more than 20% of readable pages fail. Inference is
+deadline-aware; set `HB_DOCUMENT_DEADLINE_SECONDS` to override the 55-second
+default.
 
 ## Cloudflare setup
 
