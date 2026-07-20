@@ -62,7 +62,7 @@ Root GitHub repository:
 - Production site returns HTTP 200.
 - Production sample round-trip returns an annotated PDF.
 
-### Tasks 2–4 deployed and verified; Task 5 awaiting credential activation
+### Tasks 2–5 deployed and verified in Stripe Sandbox
 
 - The full 15-case B7 matrix passes, including the real 42-page sample, a 150-page
   Teacher's Pet document, concurrent documents, a full-cache repeat, two 400-page
@@ -75,11 +75,13 @@ Root GitHub repository:
 - Four real books (246, 272, 673, and 1,151 pages) have verified annotated outputs in
   `outputs/`; the over-cap book was processed as two chapter-aligned passes and stitched.
 - The three one-time Stripe test products and Payment Links exist with the required
-  success redirect. Their non-secret URLs are staged in Higgsfield. Payment activation
-  and end-to-end test checkout acceptance remain pending `STRIPE_SECRET_KEY` in the
-  Higgsfield secret store.
-- The optional tip button remains disabled until the owner's real
-  `BUY_ME_A_COFFEE_URL` is supplied.
+  success redirect. The Stripe test secret and non-secret URLs are installed in
+  Higgsfield, and all three products pass end-to-end Sandbox checkout and key minting.
+- Stripe Adaptive Pricing is active on the Payment Links. A fresh India-localized
+  checkout presents INR first and offers UPI; Stripe dynamically orders other enabled
+  local wallets by country, currency, browser, and device compatibility.
+- The Buy Me a Coffee tip button is active at the owner's profile URL and intentionally
+  grants no entitlement.
 
 ### Production runtime
 
@@ -131,9 +133,12 @@ Never commit any of these values.
   `https://hb-pdf.higgsfield.app/success?session_id={CHECKOUT_SESSION_ID}`.
 - `BUY_ME_A_COFFEE_URL`: optional tip URL; it grants no entitlement.
 
-The Stripe prices must be one-time USD payments of exactly `$5.00`, `$40.00`, and
-`$3.99`. The success route verifies the Checkout Session directly with Stripe before
-minting any key, and repeated visits return the same key.
+The Stripe prices are configured as one-time USD payments of exactly `$5.00`, `$40.00`,
+and `$3.99`. Payment Links use Stripe Adaptive Pricing so buyers can see and pay a
+converted local-currency amount. Stripe keeps the Checkout Session total in the original
+USD integration currency and records the localized charge in `presentment_details`; the
+success route verifies the exact USD total and trusted Payment Link directly with Stripe
+before minting a key. Repeated visits return the same key.
 
 The OpenAI key belongs only on the engine. It must never be sent to the browser or stored in the site.
 
