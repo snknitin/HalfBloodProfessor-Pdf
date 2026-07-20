@@ -62,7 +62,7 @@ Root GitHub repository:
 - Production site returns HTTP 200.
 - Production sample round-trip returns an annotated PDF.
 
-### Tasks 2–5 implemented locally (not yet deployed)
+### Tasks 2–4 deployed and verified; Task 5 awaiting credential activation
 
 - The full 15-case B7 matrix passes, including the real 42-page sample, a 150-page
   Teacher's Pet document, concurrent documents, a full-cache repeat, two 400-page
@@ -71,10 +71,15 @@ Root GitHub repository:
   browser storage are implemented and tested.
 - Professor's Pass chunk planning, live chapter progress, direct engine upload,
   encrypted 24-hour recovery, success-only credit consumption, and one-active-book
-  admission are implemented and tested locally.
-- Stripe session verification and idempotent fulfillment are implemented. Actual
-  Stripe test-mode acceptance remains pending the account-owned Stripe test secret
-  and three Payment Links.
+  admission are deployed and tested locally and against the Hugging Face engine.
+- Four real books (246, 272, 673, and 1,151 pages) have verified annotated outputs in
+  `outputs/`; the over-cap book was processed as two chapter-aligned passes and stitched.
+- The three one-time Stripe test products and Payment Links exist with the required
+  success redirect. Their non-secret URLs are staged in Higgsfield. Payment activation
+  and end-to-end test checkout acceptance remain pending `STRIPE_SECRET_KEY` in the
+  Higgsfield secret store.
+- The optional tip button remains disabled until the owner's real
+  `BUY_ME_A_COFFEE_URL` is supplied.
 
 ### Production runtime
 
