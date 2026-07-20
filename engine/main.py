@@ -45,9 +45,9 @@ from engine.books import (
     stitch_chunks,
 )
 
-FREE_MAX_PDF_BYTES = 25 * 1024 * 1024
+FREE_MAX_PDF_BYTES = 20 * 1024 * 1024
 FREE_MAX_PAGES = 50
-TEACHER_MAX_PDF_BYTES = 100 * 1024 * 1024
+TEACHER_MAX_PDF_BYTES = 50 * 1024 * 1024
 TEACHER_MAX_PAGES = 150
 MIN_PAGE_CHARS = 300
 MAX_PAGE_TEXT_CHARS = 4_000
@@ -436,15 +436,18 @@ async def _process_pdf(
         raise DocumentProcessingError(503, detail, metadata)
 
     annotations: list[dict[str, Any]] = []
-    diagram_seen = False
+    # Distribute diagrams instead of allowing the first page to monopolize the
+    # single diagram previously permitted for an entire document.
+    diagram_windows: set[int] = set()
     for page_result in sorted(page_results, key=lambda result: result.page_number):
         if page_result.status not in {"success", "valid_empty"}:
             continue
         for annotation in page_result.annotations:
             if annotation["type"] == "diagram":
-                if diagram_seen:
+                window = (page_result.page_number - 1) // 8
+                if window in diagram_windows:
                     continue
-                diagram_seen = True
+                diagram_windows.add(window)
             annotations.append({"page": page_result.page_number, **annotation})
 
     if progress:

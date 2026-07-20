@@ -273,6 +273,34 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.status_code, 422)
         self.assertIn("50 pages", raised.exception.detail)
 
+    async def test_tier_file_limits_match_the_published_offer(self):
+        self.assertEqual(main._tier_limits("free"), (20 * 1024 * 1024, 50))
+        self.assertEqual(main._tier_limits("teacher"), (50 * 1024 * 1024, 150))
+
+    async def test_diagrams_are_distributed_across_eight_page_windows(self):
+        self.fake_responses.handler = lambda _kwargs: SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "annotations": [
+                        {
+                            "type": "diagram",
+                            "title": "Fast map",
+                            "labels": ["input", "process", "result"],
+                        }
+                    ]
+                }
+            )
+        )
+        pdf = make_pdf([page_text(f"diagram-{index}") for index in range(9)])
+        empty_report = render.RenderReport()
+        with patch(
+            "engine.main.annotate_bytes", return_value=(pdf, empty_report)
+        ) as renderer:
+            await main._process_pdf(pdf)
+        rendered_annotations = renderer.call_args.args[1]
+        diagrams = [item for item in rendered_annotations if item["type"] == "diagram"]
+        self.assertEqual([item["page"] for item in diagrams], [1, 9])
+
     async def test_auth_uses_required_shared_secret(self):
         main._verify_auth("test-secret")
         with self.assertRaises(HTTPException) as raised:
@@ -385,6 +413,34 @@ class RendererReliabilityTests(unittest.TestCase):
         )
         rendered = fitz.open(stream=rendered_bytes, filetype="pdf")
         self.assertGreaterEqual(len(rendered[0].get_drawings()), 1)
+        rendered.close()
+
+    def test_annotation_types_use_multiple_deterministic_ink_colors(self):
+        pdf = make_pdf([page_text()])
+        annotations = [
+            {"page": 1, "type": "strike", "quote": "Alpha beta gamma", "correction": "Better term"},
+            {"page": 1, "type": "underline", "quote": "central relationship and its", "double": True},
+            {"page": 1, "type": "highlight", "quote": "current evidence, measured results,"},
+        ]
+        first, first_report = render.annotate_bytes(pdf, annotations)
+        second, second_report = render.annotate_bytes(pdf, annotations)
+        self.assertEqual(first, second)
+        self.assertEqual(first_report.errors, second_report.errors)
+        rendered = fitz.open(stream=first, filetype="pdf")
+        colors = {
+            tuple(round(value, 3) for value in drawing["color"])
+            for drawing in rendered[0].get_drawings()
+            if drawing.get("color") is not None
+        }
+        self.assertGreaterEqual(len(colors), 2)
+        rendered.close()
+
+    def test_genuinely_blank_interior_page_gets_zero_token_doodle(self):
+        pdf = make_pdf([page_text("opening"), "", page_text("closing")])
+        rendered_bytes, report = render.annotate_bytes(pdf, [])
+        self.assertEqual(report.blank_page_doodles, 1)
+        rendered = fitz.open(stream=rendered_bytes, filetype="pdf")
+        self.assertGreater(len(rendered[1].get_drawings()), 0)
         rendered.close()
 
     @unittest.skipUnless(
@@ -576,6 +632,12 @@ class PromptContractTests(unittest.TestCase):
         diagram = variants[-1]["properties"]
         self.assertEqual(diagram["title"]["anyOf"][0]["maxLength"], MAX_DIAGRAM_TITLE_CHARS)
         self.assertEqual(diagram["labels"]["items"]["maxLength"], MAX_DIAGRAM_LABEL_CHARS)
+
+    def test_prompt_requests_expert_study_value_without_more_page_calls(self):
+        self.assertIn("plain English", main.SYSTEM_PROMPT)
+        self.assertIn("mnemonic", main.SYSTEM_PROMPT)
+        self.assertIn("vivid but brief analogy", main.SYSTEM_PROMPT)
+        self.assertIn("5-6 useful annotations", main.SYSTEM_PROMPT)
 
     def test_sanitizer_enforces_character_caps_before_rendering_or_cache(self):
         payload = {

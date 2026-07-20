@@ -21,15 +21,16 @@ Public site: **https://hb-pdf.higgsfield.app**
 
 ## Current architecture
 
-1. The Higgsfield site accepts a PDF, verifies Cloudflare Turnstile, and enforces five
+1. The Higgsfield site accepts a PDF, verifies Cloudflare Turnstile, and enforces three
    free requests per IP hash per day or paid access-key quotas with KV.
 2. Its server route streams chapters to the authenticated Hugging Face engine. Whole
    books upload directly to the engine with a short-lived, site-signed authorization.
 3. FastAPI extracts text with PyMuPDF and calls OpenAI once per page with a strict
    structured-output schema.
-4. The unchanged Track A renderer maps exact quotes to coordinates and returns the
-   annotated PDF as a streamed result. Whole books run in chapter-aware chunks and the
-   encrypted result remains recoverable with its access key for 24 hours.
+4. The deterministic renderer maps exact quotes to coordinates, mixes semantic ink and
+   highlight colors, places compact study notes in safe margins, and adds sparse diagrams
+   or blank-page doodles where they teach something. Whole books run in chapter-aware
+   chunks and the encrypted result remains recoverable with its access key for 24 hours.
 
 | Part | Implementation |
 | --- | --- |
@@ -43,8 +44,8 @@ Public site: **https://hb-pdf.higgsfield.app**
 ## Limits
 
 - Searchable, digital-text PDFs only; scanned PDFs need OCR first.
-- Free: 50 pages, 25 MB, 5 documents/day.
-- Teacher's Pet: 150 pages, 100 MB, 10/day and 100/month.
+- Free: 50 pages, 20 MB, 3 documents/day.
+- Teacher's Pet: 150 pages, 50 MB, 10/day and 100/month.
 - Professor's Pass: one book up to 1,000 pages and 150 MB.
 - English-first annotations.
 
