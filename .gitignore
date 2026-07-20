@@ -232,3 +232,4 @@ videos/HB-pdf.mp4
 # Developer testing harness and secrets - never commit
 .env
 dev/
+.env.example
