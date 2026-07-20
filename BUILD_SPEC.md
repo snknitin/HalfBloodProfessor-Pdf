@@ -21,7 +21,7 @@ What exists and works (see `outputs/Ch1_annotated.pdf` for proof — 5 pages, 25
 
 | File | Role |
 |------|------|
-| `app/scribe.py` | Ink primitives: wavy strike/underline, hand-drawn circles, curved arrows, highlighter quads, cross-hatch scribbles, star/asterisk/exclaim doodles, rotated margin notes in embedded handwriting fonts, chain diagrams (horizontal row or vertical margin column) |
+| `app/scribe.py` | Ink primitives: clean strike/underline, hand-drawn circles, brackets, checkmarks, compact callout icons, curved arrows, semantic highlighter quads, star/asterisk/exclaim doodles, rotated margin notes in embedded handwriting fonts, lists, and chain diagrams |
 | `app/pipeline.py` | Quote→coordinate matching (`page.search_for` + CJK-ligature fallback), anchor-ordered greedy margin placement, CLI |
 | `app/annotations_ch1.json` | 25 hand-authored annotations in the exact JSON schema the LLM must emit |
 | `app/fonts/` | Caveat (margin notes), Homemade Apple (scrawled corrections) — OFL/Apache, embeddable |
@@ -37,13 +37,16 @@ deterministic Python (`sha256(pdf_bytes)` seeds the RNG) — same upload, identi
 
 ```json
 {"annotations": [
-  {"type": "underline", "quote": "verbatim substring from the page", "note": "margin note <= 14 words", "double": false},
-  {"type": "strike",    "quote": "the outdated phrase", "correction": "<= 5 words", "note": "optional why"},
+  {"type": "underline", "quote": "verbatim substring from the page", "note": "margin note <= 36 words", "double": false},
+  {"type": "strike",    "quote": "the outdated phrase", "correction": "<= 8 words", "note": "optional why"},
   {"type": "circle",    "quote": "weak claim", "note": "margin note; arrow drawn to it"},
-  {"type": "highlight", "quote": "key phrase"},
-  {"type": "scribble",  "quote": "opening words of a bad passage", "note": "dismissive comment"},
+  {"type": "highlight", "quote": "key phrase", "meaning": "key | example | definition | evidence | caution"},
   {"type": "doodle",    "quote": "anchor text", "symbol": "star | asterisk | exclaim"},
   {"type": "margin",    "quote": "anchor text", "note": "commentary tied to this line"},
+  {"type": "bracket",   "quote": "opening anchor", "end_quote": "optional ending anchor", "note": "section-level insight"},
+  {"type": "list",      "quote": "narrative anchor", "title": "optional title", "items": ["step 1", "step 2"]},
+  {"type": "checkmark", "quote": "strong evidence", "counter": "optional limitation"},
+  {"type": "callout",   "quote": "anchor text", "icon": "question | warning | practice | definition", "note": "expert insight"},
   {"type": "diagram",   "title": "optional caption", "labels": ["node1", "node2", "node3"]}
 ]}
 ```
@@ -51,7 +54,9 @@ deterministic Python (`sha256(pdf_bytes)` seeds the RNG) — same upload, identi
 Prompt rules that keep the deterministic side safe (enforce in the system prompt):
 - Quotes must be **verbatim substrings, 3–8 words**, never starting or ending inside a
   hyphen-wrapped word (hyphen-split quotes silently fail to match).
-- **≤ 6 annotations per page**; at most one `diagram` per document.
+- **≤ 10 annotations per page**; at most one `diagram` per document.
+- Highlight meanings are stable across every file: yellow key idea, orange example or
+  application, blue definition or concept, green evidence or result, red caution or error.
 - Voice: terse, confident, slightly caustic expert ("Obviously dated — Göbekli Tepe, ~9500 BCE").
   Notes carry real, current knowledge: corrections, updated numbers, newer results, better methods.
 - Unmatched quotes are dropped silently by the engine — a missing doodle is invisible,
@@ -143,11 +148,11 @@ tried as a replacement:
    `outputs/eval/<model>/annotated.pdf` + a summary (annotations per page, % quotes
    matched, token usage).
 2. Promotion bar: the candidate must retain *specific* corrections (named results, dates,
-   numbers) at 5–6 annotations/page with a similar quote-match rate. Specificity is the
+   numbers) at 8–10 annotations/page with a similar quote-match rate. Specificity is the
    product; generic notes ("this may be outdated") fail the candidate.
 
-Already-built cost levers (keep them on): per-page cache, ≤ 6 annotations/page,
-`max_output_tokens` ≈ 700, short-circuit near-empty pages, tiered daily quotas (B6),
+Already-built cost levers (keep them on): per-page cache, ≤ 10 annotations/page,
+`max_output_tokens` = 2,200, short-circuit near-empty pages, tiered daily quotas (B6),
 structured outputs (no retry burn on parse failures).
 
 ### B3. Website (`site/` — Higgsfield, project name `hb-pdf`)
@@ -219,7 +224,7 @@ remain an optional future migration (Workers Paid plan) and are NOT required for
 | Book progress UX | **Chapter-aware chunking:** align chunk boundaries to the PDF's table of contents (`doc.get_toc()`) when present, and show chapters finishing live ("✓ Ch 3: Statistical Learning — done · scribbling Ch 4…"); fallback to "Part 3 of 12 (pages 101–150)" when no TOC. The user watches their book get finished chapter by chapter |
 | Book result retention | **24 h, encrypted, keyed to access key** — exists as delivery insurance only (so a dropped connection never requires re-crediting or a free re-run), not a library |
 | Model | **Same model for every tier** (current `HB_MODEL`); plans differ on limits/priority only; open-source swap possible later via B2 harness |
-| Annotation density | **5–6 per page — dense marginalia IS the product.** Margins full of notes, underlines, arrows, fact-checks, corrections, highlights, like an expert proofread it. Fix placement quality, never reduce density |
+| Annotation density | **8–10 per dense page — dense marginalia IS the product.** Margins full of notes, underlines, arrows, fact-checks, corrections, highlights, like an expert proofread it. Fix placement quality, never reduce density |
 | Payments go live | **only after the P0 reliability fixes** (smoke report §16, Priority 0–1) |
 | Custom domain (`hb-pdf.app`) | **DEFERRED — low priority, do not work on it** |
 
@@ -464,4 +469,4 @@ B2, B3, B4) — one phase per session, run its acceptance criteria before moving
 | Paying user loses a long-run result | Book results stored encrypted 24 h, re-downloadable by key; credit consumed only on success |
 | Cold container start | `sleepAfter: 15m` + cached sample doc keeps demos snappy; progress UI absorbs the rest |
 | Copyright of uploads | In-memory only, never stored, never public; "upload only content you may use" |
-| Noisy/ugly pages | Density stays at 5–6/page by design (dense marginalia IS the product) — the fix is placement quality: rectangle clamping, correction wrapping, both-margin scoring, per-annotation render isolation (smoke report §16). Seeded RNG → reproducible → debuggable |
+| Noisy/ugly pages | Density targets 8–10 on dense pages (dense marginalia IS the product) — the fix is placement quality: rectangle clamping, correction wrapping, both-margin scoring, per-annotation render isolation (smoke report §16). Seeded RNG → reproducible → debuggable |

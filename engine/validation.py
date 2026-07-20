@@ -10,11 +10,11 @@ from __future__ import annotations
 from typing import Any
 
 MAX_QUOTE_CHARS = 240
-MAX_NOTE_CHARS = 180
+MAX_NOTE_CHARS = 320
 MAX_CORRECTION_CHARS = 80
 MAX_DIAGRAM_TITLE_CHARS = 80
 MAX_DIAGRAM_LABEL_CHARS = 60
-MAX_ANNOTATIONS_PER_PAGE = 6
+MAX_ANNOTATIONS_PER_PAGE = 10
 
 QUOTE_KINDS = {
     "underline",
@@ -24,16 +24,24 @@ QUOTE_KINDS = {
     "scribble",
     "doodle",
     "margin",
+    "bracket",
+    "list",
+    "checkmark",
+    "callout",
 }
 
 _CONTRACT_KEYS = {
     "underline": {"type", "quote", "note", "double"},
     "strike": {"type", "quote", "correction", "note"},
     "circle": {"type", "quote", "note"},
-    "highlight": {"type", "quote"},
+    "highlight": {"type", "quote", "meaning"},
     "scribble": {"type", "quote", "note"},
     "doodle": {"type", "quote", "symbol"},
     "margin": {"type", "quote", "note"},
+    "bracket": {"type", "quote", "end_quote", "note"},
+    "list": {"type", "quote", "title", "items"},
+    "checkmark": {"type", "quote", "counter"},
+    "callout": {"type", "quote", "icon", "note"},
     "diagram": {"type", "title", "labels"},
 }
 
@@ -108,8 +116,8 @@ def sanitize_annotation(
         return None
 
     clean = {"type": kind, "quote": quote}
-    note = _bounded_words(candidate.get("note"), 14, MAX_NOTE_CHARS)
-    correction = _bounded_words(candidate.get("correction"), 5, MAX_CORRECTION_CHARS)
+    note = _bounded_words(candidate.get("note"), 36, MAX_NOTE_CHARS)
+    correction = _bounded_words(candidate.get("correction"), 8, MAX_CORRECTION_CHARS)
 
     if kind == "underline":
         clean["double"] = bool(candidate.get("double", False))
@@ -121,9 +129,51 @@ def sanitize_annotation(
         clean["correction"] = correction
         if note:
             clean["note"] = note
+    elif kind == "highlight":
+        meaning = candidate.get("meaning", "key")
+        if meaning not in {"key", "example", "definition", "evidence", "caution"}:
+            return None
+        clean["meaning"] = meaning
     elif kind in {"circle", "scribble", "margin"}:
         if not note:
             return None
+        clean["note"] = note
+    elif kind == "bracket":
+        if not note:
+            return None
+        end_quote = _bounded_string(candidate.get("end_quote"), MAX_QUOTE_CHARS)
+        if end_quote and enforce_quote_words and not 3 <= len(end_quote.split()) <= 8:
+            return None
+        if end_quote:
+            clean["end_quote"] = end_quote
+        clean["note"] = note
+    elif kind == "list":
+        items = candidate.get("items")
+        if not isinstance(items, list) or not 2 <= len(items) <= 5:
+            return None
+        clean_items = []
+        for item in items:
+            value = _bounded_string(item, MAX_DIAGRAM_LABEL_CHARS)
+            if not value:
+                return None
+            clean_items.append(value)
+        title = _bounded_string(candidate.get("title"), MAX_DIAGRAM_TITLE_CHARS)
+        if title:
+            clean["title"] = title
+        clean["items"] = clean_items
+    elif kind == "checkmark":
+        counter = _bounded_words(candidate.get("counter"), 36, MAX_NOTE_CHARS)
+        if counter:
+            clean["counter"] = counter
+    elif kind == "callout":
+        if not note or candidate.get("icon") not in {
+            "question",
+            "warning",
+            "practice",
+            "definition",
+        }:
+            return None
+        clean["icon"] = candidate["icon"]
         clean["note"] = note
     elif kind == "doodle":
         symbol = candidate.get("symbol")

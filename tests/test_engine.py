@@ -55,7 +55,7 @@ class FakeResponses:
     async def create(self, **kwargs):
         self.calls += 1
         assert kwargs["temperature"] == 0.3
-        assert kwargs["max_output_tokens"] == 1_400
+        assert kwargs["max_output_tokens"] == 2_200
         assert kwargs["text"]["format"]["strict"] is True
         return self.handler(kwargs)
 
@@ -415,7 +415,7 @@ class RendererReliabilityTests(unittest.TestCase):
         self.assertGreaterEqual(len(rendered[0].get_drawings()), 1)
         rendered.close()
 
-    def test_annotation_types_use_multiple_deterministic_ink_colors(self):
+    def test_marks_use_multiple_deterministic_ink_colors(self):
         pdf = make_pdf([page_text()])
         annotations = [
             {"page": 1, "type": "strike", "quote": "Alpha beta gamma", "correction": "Better term"},
@@ -434,6 +434,96 @@ class RendererReliabilityTests(unittest.TestCase):
         }
         self.assertGreaterEqual(len(colors), 2)
         rendered.close()
+
+    def test_highlight_meanings_map_to_stable_colors(self):
+        expected = {
+            "key": render.scribe.HIGHLIGHT,
+            "example": render.scribe.HIGHLIGHT_ORANGE,
+            "definition": render.scribe.HIGHLIGHT_BLUE,
+            "evidence": render.scribe.HIGHLIGHT_GREEN,
+            "caution": render.scribe.HIGHLIGHT_RED,
+        }
+        for meaning, color in expected.items():
+            self.assertEqual(
+                render._annotation_color(
+                    {"type": "highlight", "meaning": meaning}, None
+                ),
+                color,
+            )
+
+    def test_bracket_list_checkmark_and_callout_render_safely(self):
+        text = " ".join(
+            [
+                "Opening argument explains the mechanism in detail.",
+                "Dense narrative presents several steps for the learner.",
+                "Strong evidence supports this result in practice.",
+                "Practical limitation appears during deployment at scale.",
+                "Ending claim completes the mechanism with a clear conclusion.",
+            ]
+            * 8
+        )
+        pdf = make_pdf([text])
+        annotations = [
+            {
+                "page": 1,
+                "type": "bracket",
+                "quote": "Opening argument explains the mechanism",
+                "end_quote": "Ending claim completes the mechanism",
+                "note": "This span forms one complete argument.",
+            },
+            {
+                "page": 1,
+                "type": "list",
+                "quote": "Dense narrative presents several steps",
+                "title": "Working sequence",
+                "items": ["Observe the input", "Apply the rule", "Check the result"],
+            },
+            {
+                "page": 1,
+                "type": "checkmark",
+                "quote": "Strong evidence supports this result",
+                "counter": "Strong evidence, but verify the deployment population.",
+            },
+            {
+                "page": 1,
+                "type": "callout",
+                "quote": "Practical limitation appears during deployment",
+                "icon": "warning",
+                "note": "Field failure mode: monitor this boundary first.",
+            },
+        ]
+        rendered_bytes, report = render.annotate_bytes(pdf, annotations)
+        self.assertEqual(report.errors, [])
+        self.assertEqual(report.annotations_received, 4)
+        rendered = fitz.open(stream=rendered_bytes, filetype="pdf")
+        self.assertGreater(len(rendered[0].get_drawings()), 4)
+        rendered.close()
+
+    def test_annotation_prose_and_corrections_render_in_black_ink(self):
+        pdf = make_pdf([page_text()])
+        annotations = [
+            {
+                "page": 1,
+                "type": "underline",
+                "quote": "central relationship and its",
+                "note": "A longer expert explanation belongs in readable black handwriting.",
+                "double": False,
+            },
+            {
+                "page": 1,
+                "type": "strike",
+                "quote": "Alpha beta gamma",
+                "correction": "Use the current term",
+            },
+        ]
+        with patch("engine.render.scribe.note_text", wraps=render.scribe.note_text) as notes:
+            rendered_bytes, report = render.annotate_bytes(pdf, annotations)
+        self.assertGreater(len(rendered_bytes), 0)
+        self.assertEqual(report.errors, [])
+        self.assertTrue(notes.call_args_list)
+        self.assertTrue(
+            all(call.kwargs.get("color") == render.scribe.INK for call in notes.call_args_list)
+        )
 
     def test_genuinely_blank_interior_page_gets_zero_token_doodle(self):
         pdf = make_pdf([page_text("opening"), "", page_text("closing")])
@@ -619,7 +709,7 @@ class BookCreditTests(unittest.IsolatedAsyncioTestCase):
 class PromptContractTests(unittest.TestCase):
     def test_schema_caps_annotations_fields_and_disallows_extra_fields(self):
         annotations = ANNOTATION_SCHEMA["properties"]["annotations"]
-        self.assertEqual(annotations["maxItems"], 6)
+        self.assertEqual(annotations["maxItems"], 10)
         self.assertFalse(ANNOTATION_SCHEMA["additionalProperties"])
         variants = annotations["items"]["anyOf"]
         self.assertEqual(variants[0]["properties"]["quote"]["maxLength"], MAX_QUOTE_CHARS)
@@ -636,8 +726,19 @@ class PromptContractTests(unittest.TestCase):
     def test_prompt_requests_expert_study_value_without_more_page_calls(self):
         self.assertIn("plain English", main.SYSTEM_PROMPT)
         self.assertIn("mnemonic", main.SYSTEM_PROMPT)
-        self.assertIn("vivid but brief analogy", main.SYSTEM_PROMPT)
-        self.assertIn("5-6 useful annotations", main.SYSTEM_PROMPT)
+        self.assertIn("20-36 words", main.SYSTEM_PROMPT)
+        self.assertIn("8-10 meaningful annotations", main.SYSTEM_PROMPT)
+        self.assertIn("mostly black handwritten note text", main.SYSTEM_PROMPT)
+        self.assertIn("zig-zag scratches", main.SYSTEM_PROMPT)
+        self.assertIn("key = yellow", main.SYSTEM_PROMPT)
+
+    def test_prompt_schema_no_longer_generates_scribbles(self):
+        variants = ANNOTATION_SCHEMA["properties"]["annotations"]["items"]["anyOf"]
+        generated_types = {
+            variant["properties"]["type"]["const"] for variant in variants
+        }
+        self.assertNotIn("scribble", generated_types)
+        self.assertTrue({"bracket", "list", "checkmark", "callout"} <= generated_types)
 
     def test_sanitizer_enforces_character_caps_before_rendering_or_cache(self):
         payload = {
@@ -661,6 +762,21 @@ class PromptContractTests(unittest.TestCase):
         self.assertLessEqual(len(clean[0]["note"]), MAX_NOTE_CHARS)
         self.assertLessEqual(len(clean[1]["title"]), MAX_DIAGRAM_TITLE_CHARS)
         self.assertTrue(all(len(label) <= MAX_DIAGRAM_LABEL_CHARS for label in clean[1]["labels"]))
+
+    def test_sanitizer_preserves_longer_multiline_expert_notes(self):
+        note = " ".join(f"word{index}" for index in range(30))
+        payload = {
+            "annotations": [
+                {
+                    "type": "margin",
+                    "quote": "three useful exact words",
+                    "note": note,
+                }
+            ]
+        }
+        clean = main._sanitize_annotations(payload)
+        self.assertEqual(clean[0]["note"], note)
+        self.assertEqual(len(clean[0]["note"].split()), 30)
 
     def test_sanitizer_isolates_invalid_items_and_defaults_optional_fields(self):
         payload = {

@@ -1,8 +1,9 @@
 # HalfBlood Professor PDF
 
 Upload a searchable textbook chapter and get back a new PDF with useful underlines,
-circles, corrections, diagrams, and handwritten margin notes. The AI decides what to
-mark; deterministic Python draws every coordinate and pen stroke.
+circles, corrections, brackets, scannable lists, expert callouts, diagrams, and
+handwritten margin notes. The AI decides what to mark; deterministic Python draws every
+coordinate and pen stroke.
 
 Public site: **https://hb-pdf.higgsfield.app**
 
@@ -27,10 +28,12 @@ Public site: **https://hb-pdf.higgsfield.app**
    books upload directly to the engine with a short-lived, site-signed authorization.
 3. FastAPI extracts text with PyMuPDF and calls OpenAI once per page with a strict
    structured-output schema.
-4. The deterministic renderer maps exact quotes to coordinates, mixes semantic ink and
-   highlight colors, places compact study notes in safe margins, and adds sparse diagrams
-   or blank-page doodles where they teach something. Whole books run in chapter-aware
-   chunks and the encrypted result remains recoverable with its access key for 24 hours.
+4. The deterministic renderer maps exact quotes to coordinates, keeps annotation prose
+   in black handwriting, places 8-10 useful marks on dense pages, and adds brackets,
+   evidence checks, expert callouts, diagrams, or blank-page doodles where they teach
+   something. Highlight colors are stable: yellow=key, orange=example, blue=definition,
+   green=evidence, and red=caution. Whole books run in chapter-aware chunks and the
+   encrypted result remains recoverable with its access key for 24 hours.
 
 | Part | Implementation |
 | --- | --- |
