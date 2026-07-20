@@ -55,18 +55,20 @@ def sanitize_annotations(
 
     result: list[dict[str, Any]] = []
     for candidate in candidates:
-        if enforce_contract and (
-            not isinstance(candidate, dict)
-            or candidate.get("type") not in _CONTRACT_KEYS
-            or set(candidate) != _CONTRACT_KEYS[candidate["type"]]
-        ):
-            raise ValueError("Invalid annotation contract")
+        if not isinstance(candidate, dict) or candidate.get("type") not in _CONTRACT_KEYS:
+            continue
+        if enforce_contract and not set(candidate).issubset(_CONTRACT_KEYS[candidate["type"]]):
+            continue
         clean = sanitize_annotation(candidate)
         if clean is None:
-            # A non-empty invalid array is not an intentional empty result.  It
-            # must take the parse-failure path and must never enter either cache.
-            raise ValueError("Invalid annotation")
+            # Per-annotation isolation: a single weak model item must not discard
+            # the other renderer-safe annotations for this page.
+            continue
         result.append(clean)
+    if candidates and not result:
+        # A wholly malformed non-empty response is not an intentional empty page
+        # and must never enter either cache.
+        raise ValueError("No valid annotations in non-empty response")
     return result
 
 
