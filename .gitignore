@@ -228,3 +228,7 @@ node_modules/
 .wrangler/
 videos/Demo.mp4
 videos/HB-pdf.mp4
+
+# Developer testing harness and secrets - never commit
+.env
+dev/

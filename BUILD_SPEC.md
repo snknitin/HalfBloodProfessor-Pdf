@@ -74,14 +74,17 @@ Prompt rules that keep the deterministic side safe (enforce in the system prompt
   rewrite of scribe/pipeline with pdf.js + pdf-lib; rejected — it re-opens the entire
   proven aesthetic for re-tuning.)
 - **LLM:** OpenAI API via the user's GPT credits. Model name comes from env var `HB_MODEL` —
-  never hardcode it. Default to the current **mini tier** model; the nano tier is the
-  cost-cutting candidate to evaluate (see B2). Temperature 0.3, Structured Outputs (JSON
-  schema) so responses always parse.
+  never hardcode it. **DECIDED: one model for every tier** (currently `gpt-5.4-mini`);
+  paid tiers differentiate on limits and priority, never on model. A future swap to an
+  open-source model happens by changing `HB_MODEL`/endpoint, evaluated with the B2 harness.
+  Temperature 0.3, Structured Outputs (JSON schema) so responses always parse.
 - **No storage, ever.** PDF bytes: request body → memory → response. No R2, no disk, no DB.
   The only persisted data: LLM response cache and rate-limit counters in Workers KV
   (content = annotation JSON keyed by hash, never the text itself), and PostHog events.
-- **Limits:** ≤ 50 pages, ≤ 20 MB, digital-text PDFs only (empty extraction → friendly
-  rejection, no OCR). Public usage: 3 documents per IP per day.
+- **Limits:** digital-text PDFs only (empty extraction → friendly rejection, no OCR).
+  Free: ≤ 50 pages, ≤ 25 MB, 5 docs/IP/day. Teacher's Pet (monthly): ≤ 150 pages,
+  ≤ 100 MB, 10/day, 100/month. Professor's Pass (one-time whole book): one document,
+  ≤ 1,000 pages, ≤ 150 MB. Full tier design in **B6**.
 
 ### B1. Engine service (`engine/`)
 
@@ -128,24 +131,24 @@ second identical run is served from cache with zero LLM calls; smoke test still 
 Cold container start adds ~2–5 s; `sleepAfter: 15m` plus the sample-document cache makes
 demos warm. Do not add a queue to chase the tail — streaming progress covers it.
 
-### B2. Model quality ladder (cost control)
+### B2. Model evaluation harness (kept for the future open-source swap)
 
-Rough per-document cost at 50 pages: ~75k input + ~25k output tokens. At mini-tier pricing
-that is on the order of **$0.05–0.10/doc**; nano tier is ~5–10× cheaper. (Check current
-pricing; don't trust this table's absolutes, trust the ratios.)
+**DECIDED: the model does not change at launch and does not vary by tier.** `HB_MODEL`
+stays on the existing mini-tier model (measured: $0.065 / 42-page doc). This section's
+harness is NOT a launch task — it exists for the day an open-source model candidate is
+tried as a replacement:
 
 1. `engine/eval_models.py` — CLI: `python eval_models.py samples/Ch1*.pdf --models <a>,<b>`
-   → runs the same pages through each model → writes `outputs/eval/<model>/annotated.pdf`
-   + a one-page text summary (annotations per page, % quotes matched, token usage).
-2. Judge by eye: does the nano tier still produce *specific* corrections (named results,
-   dates, numbers) or does it drift generic ("this may be outdated")? Specificity is the
-   product; that's the promotion bar between tiers.
-3. Set the winner as `HB_MODEL`. Keep the mini tier for the bundled sample doc regardless —
-   it's cached, so it costs once and demos at top quality forever.
+   → runs the same pages through each model/endpoint → writes
+   `outputs/eval/<model>/annotated.pdf` + a summary (annotations per page, % quotes
+   matched, token usage).
+2. Promotion bar: the candidate must retain *specific* corrections (named results, dates,
+   numbers) at 5–6 annotations/page with a similar quote-match rate. Specificity is the
+   product; generic notes ("this may be outdated") fail the candidate.
 
 Already-built cost levers (keep them on): per-page cache, ≤ 6 annotations/page,
-`max_output_tokens` ≈ 700, short-circuit near-empty pages, 3 docs/IP/day, structured
-outputs (no retry burn on parse failures).
+`max_output_tokens` ≈ 700, short-circuit near-empty pages, tiered daily quotas (B6),
+structured outputs (no retry burn on parse failures).
 
 ### B3. Website (`site/` — Higgsfield, project name `hb-pdf`)
 
@@ -168,10 +171,10 @@ sign-in). The site is a **single-page product** plus nothing else:
 - **Footer lines (required):** "Annotations are AI-generated and may be wrong." ·
   "Upload only content you have the right to use." · "Files are processed in memory and
   never stored."
-- **`/api/annotate` route in the site Worker:** verify Turnstile token → KV rate limit
-  (3/day/IP, keyed on hashed IP) → forward body to the engine Worker with `X-HB-Auth` →
-  stream the engine's response through. The OpenAI key lives only in the engine; the
-  shared secret lives only in the two Workers.
+- **`/api/annotate` route in the site Worker:** verify Turnstile token → quota check
+  (free: hashed-IP counter; pass holders: access-key counter — see B6) → forward body to
+  the engine with `X-HB-Auth` → stream the engine's response through. The OpenAI key
+  lives only in the engine; the shared secret lives only in the site server and engine.
 - PostHog: `page_viewed`, `pdf_uploaded` (page count only), `pdf_annotated` (duration),
   `sample_clicked`, `error_occurred` (reason). No content, no filenames.
 
@@ -199,6 +202,240 @@ the site iterates (copy, design, animation) without touching `engine/`.
 - "Persona" dropdown (Half-Blood Professor / Archaeology Mentor / AI Engineer) — it's a
   one-line system-prompt swap; do it only if demo feedback asks for it.
 
+### B6. Monetization: Teacher's Pet & Professor's Pass (FINAL — all decisions locked)
+
+Context: the live stack is site on Higgsfield (`hb-pdf.higgsfield.app`) + engine on a free
+Hugging Face Docker Space + Cloudflare free (Turnstile, KV) — see `DEPLOYMENT_HANDOFF.md`.
+Everything below runs on that stack with zero new infrastructure. Cloudflare Containers
+remain an optional future migration (Workers Paid plan) and are NOT required for B6.
+
+#### Decisions locked (do not re-ask, do not relitigate)
+
+| Decision | Value |
+|---|---|
+| Teacher's Pet price | **$5 / 30 days**, yearly **$40** |
+| Professor's Pass price | **$3.99 per book, one-time** |
+| Book caps | **1,000 pages / 150 MB.** The page cap is an anti-abuse bound (stitching several PDFs into one file to pay once), not a product limit — it covers virtually every real single book, every job under it is profitable (break-even ≈ 2,575 p), and it bounds wall-time. The 150 MB is a technical bound of the 1 GB Space. Over-cap books get a friendly "split it into two passes" message |
+| Book progress UX | **Chapter-aware chunking:** align chunk boundaries to the PDF's table of contents (`doc.get_toc()`) when present, and show chapters finishing live ("✓ Ch 3: Statistical Learning — done · scribbling Ch 4…"); fallback to "Part 3 of 12 (pages 101–150)" when no TOC. The user watches their book get finished chapter by chapter |
+| Book result retention | **24 h, encrypted, keyed to access key** — exists as delivery insurance only (so a dropped connection never requires re-crediting or a free re-run), not a library |
+| Model | **Same model for every tier** (current `HB_MODEL`); plans differ on limits/priority only; open-source swap possible later via B2 harness |
+| Annotation density | **5–6 per page — dense marginalia IS the product.** Margins full of notes, underlines, arrows, fact-checks, corrections, highlights, like an expert proofread it. Fix placement quality, never reduce density |
+| Payments go live | **only after the P0 reliability fixes** (smoke report §16, Priority 0–1) |
+| Custom domain (`hb-pdf.app`) | **DEFERRED — low priority, do not work on it** |
+
+#### Tiers
+
+| | Free ("Study Hall") | Teacher's Pet — $5/30 days ($40/yr) | Professor's Pass — $3.99 one-time |
+|---|---|---|---|
+| What you get | 5 docs/day | 10 docs/day, 100/month | **one whole book, once** |
+| Max file size | 25 MB | 100 MB | 150 MB |
+| Max pages | 50 | 150 | 1,000 |
+| Model | same for all tiers (`HB_MODEL`) | same | same |
+| Priority | queued behind paid when busy | admitted first | admitted first; one active book per engine at a time |
+| Identified by | hashed IP (daily KV counter) | access key (KV counters) | access key (single-use credit) |
+
+**Pages, not megabytes, drive cost** ($0.00155/page measured on mini). The MB caps are
+bandwidth/memory limits; the page caps and monthly ceiling are the cost limits. Never
+raise the page cap without redoing the worst-case math below. (And never upgrade the
+model per-tier: at frontier pricing a maxed subscriber would cost $90–140/month —
+the same-model-everywhere decision is a cost decision, not just a simplicity one.)
+
+#### Cost & price math (from the measured $0.065 / 42-page run)
+
+| Scenario | Cost |
+|---|---:|
+| Free doc, worst case (50 p, mini) | ~$0.08 |
+| Free user, maxed month (5/day × 50 p) | ~$12 — acceptable abuse ceiling, Turnstile-gated |
+| Teacher's Pet doc, worst case (150 p, mini) | ~$0.23 |
+| Teacher's Pet, maxed month (100 docs × 150 p) | ~$23 |
+| Teacher's Pet, realistic month (10–20 docs) | ~$2.30–4.60 |
+| Professor's Pass book, typical (300–600 p) | ~$0.47–0.93 — **77–88% margin at $3.99** |
+| Professor's Pass book, worst case (1,000 p, mini) | ~$1.55 — still ~61% margin |
+| Break-even page count at $3.99 | ~2,575 pages — the 1,000-page cap keeps every job profitable |
+
+**Teacher's Pet: $5 / 30 days, $40/year** (anchor: z-lib/Anna's Archive donation tiers).
+**Professor's Pass: $3.99 one-time per book.** Median Teacher's Pet payer is profitable;
+a maxed-out whale costs ~$23 — bounded, acceptable at donation-ware scale. The book pass
+is profitable in every case. Revisit after ~20 paying users with telemetry.
+
+#### Identity: access keys, no accounts (the Mullvad / Anna's Archive model)
+
+- Successful payment mints a random key, e.g. `hb-7f3k-92mx-q4tn` (≥ 64 bits entropy),
+  stored in KV: `key → {tier: "pass", expires: <ts>, docs_today, docs_month}` with a
+  ~32-day TTL. No email, no password, no account record, nothing to breach.
+- The success page shows the key with "save this — it IS your account" copy. The site
+  stores it in `localStorage`; every `/api/annotate` call sends it in a header.
+- **Different device = paste the same key.** That's the whole cross-device story.
+- **Recovery = the Stripe receipt.** The checkout success URL carries the Stripe
+  `session_id`; a site route exchanges a paid session for its key idempotently, any time.
+  Stripe's receipt email (which Stripe sends, not us) links back to that URL, so a lost
+  key is recoverable without us storing emails.
+- Key sharing is self-limiting: a shared key burns its own quota. No device fingerprinting,
+  no concurrent-session policing — the quota IS the enforcement.
+- Renewal = buy again (new key, or same key extended if pasted at checkout — implementer's
+  choice; new-key-each-time is simpler). No subscriptions, no cancel flow, no customer portal.
+
+#### The Professor's Pass pipeline (whole books, ≤ 1,000 pages / ≤ 150 MB)
+
+A whole book is not a new engine — it is the existing pipeline run in **chapter chunks**:
+
+- **Chunked, not monolithic:** split the document into chunks (PyMuPDF `doc.select`),
+  process chunks **sequentially** — pages *within* a chunk still fan out in parallel
+  exactly as today. Sequential chunks bound memory on the 1 GB Space, keep OpenAI
+  rate-limit pressure flat, and leave inference slots for concurrent small docs. Stitch
+  annotated chunks back with `doc.insert_pdf` at the end. Expected wall time: ~2–3 min
+  for 400 pages, ~4–6 min at the 1,000-page cap.
+- **Chunk along chapters, not arbitrary page counts:** read the PDF outline with
+  `doc.get_toc()`. When a usable TOC exists, chunk boundaries follow top-level chapters
+  (split any chapter longer than ~50 pages; merge tiny ones), and every chunk carries its
+  chapter title. No TOC → plain ~50-page chunks labeled "Part n of N (pages a–b)".
+- **Progress shows chapters finishing while they wait** — this is the product moment of
+  the book tier: a live list where each chapter goes "queued → thinking → scribbling →
+  ✓ done" ("✓ Ch 3: Statistical Learning · scribbling Ch 4…"). SSE emits a per-chunk
+  event stream; the site renders the running checklist. No hard deadline; the visibly
+  advancing chapter list is the promise. (Side effect: a stitched multi-book file
+  produces a garbled chapter list — the abuse cosmetically punishes itself.)
+- **Delivery — the one amendment to the no-storage rule:** a paying user must not lose a
+  $3.99 result because their laptop slept during minute 2. On completion, store the
+  annotated PDF **encrypted, keyed to the access key, TTL 24 h** (R2 or Space disk), and
+  return a download link. The retention exists purely as **delivery insurance** — so a
+  dropped connection never forces a re-credit or a free re-run — not as a library feature.
+  Source PDFs are still never stored; only the finished result, briefly. State this in
+  the footer copy ("your annotated book is deleted after 24 hours").
+- **Credit semantics:** the book credit is consumed **only on successful completion**.
+  A failed run (engine error, too many failed pages) leaves the credit intact and says so.
+  Key redeemable for 7 days after purchase; result downloadable 24 h after completion.
+- **Upload path:** files > 100 MB cannot transit a Cloudflare proxy Worker (body cap).
+  Book uploads go **direct to the engine origin** (CORS-allowed, key-authenticated) —
+  the engine URL is already public, and the access key is the gate.
+- **Admission:** one active book per engine instance; a second book request queues with
+  honest copy ("another book is on the professor's desk — starts in ~N min").
+
+#### Payment rails (one rail grants access; the rest are tips)
+
+- **Stripe Payment Links — the only rail that mints keys.** Three price points, two
+  products: Teacher's Pet ($5 one-time → 30-day entitlement; $40 one-time → 365-day
+  entitlement) and Professor's Pass ($3.99 one-time → one book credit).
+  Flow: Payment Link → success redirect with `session_id` → site server route verifies the
+  session as paid via Stripe API → mints key with the right tier (idempotent on
+  `session_id`) → shows it. No webhook needed at this scale; add
+  `checkout.session.completed` as hardening later.
+- **Buy Me a Coffee: donation button only, grants nothing.** Wiring BMC memberships to
+  entitlements means a second fulfillment path and manual reconciliation — skip until
+  someone actually asks, then fulfill manually by email.
+- **Gift cards (Anna's Archive style): skip.** Pure manual ops; revisit only if a real
+  anonymous-payment demand appears.
+
+#### Priority (what "priority" means with one free container)
+
+Admission control, not a queue system: the engine tracks active documents; when at
+capacity, free requests get a friendly "busy — try again in a minute" while pass holders
+are admitted. If revenue appears, the first dollars upgrade the HF Space instance (or fund
+the Workers Paid plan for the Container path) — that's the real priority upgrade.
+
+#### Custom domain: `hb-pdf.app` — **DEFERRED, low priority. Do not work on this now.**
+
+Kept for reference only. `hb-pdf.higgsfield.app` says "higgsfield" because Higgsfield
+hosts the site on its platform subdomain — same as `*.pages.dev` or `*.vercel.app`.
+When this is eventually picked up:
+
+1. Buy `hb-pdf.app` (~$15–20/yr; Cloudflare Registrar sells at cost). The `.app` TLD is
+   HTTPS-only (HSTS-preloaded) — fine, everything here is TLS anyway.
+2. **First check whether Higgsfield supports custom domains** (dashboard / CLI publish
+   settings). If yes: CNAME `hb-pdf.app` → the Higgsfield site, done.
+3. If not: put the domain on Cloudflare (free) and run a **thin reverse-proxy Worker** on
+   `hb-pdf.app` that forwards everything to `hb-pdf.higgsfield.app` (free Workers proxy
+   fine; SSE streams through). Note: Cloudflare's ~100 MB request-body limit sits exactly
+   at the paid file cap — test a real 100 MB upload through the proxy, or set the paid cap
+   to 95 MB for headroom.
+4. Either way: add `hb-pdf.app` to the Turnstile widget's allowed hostnames, update
+   PostHog's allowed origin, and keep the higgsfield.app URL as a redirect.
+
+#### B6 acceptance
+
+- Free flow unchanged except new limits (25 MB / 5-per-day / 50 pages).
+- Buying each product end-to-end in Stripe test mode: pay → key shown → key pastes on a
+  second device → tier limits apply → Teacher's Pet expires after 30 days with a friendly
+  renew message → Professor's Pass credit survives a failed run, is consumed on success.
+- A real ~100 MB / 150-page Teacher's Pet doc and a ~400-page book round-trip (memory-test
+  the HF Space — 1 GB RAM with a large PDF plus render copies is the risk, not cost).
+- Book result: re-downloadable with the key within 24 h; gone (verified) after TTL.
+- Quota counters: free per hashed IP, paid per key, monthly ceiling enforced.
+- No emails, filenames, or source PDFs stored anywhere; persisted data is only
+  `key → entitlement/counters` in KV plus the encrypted 24 h book result.
+
+### B7. Developer testing harness (local, no IP limits, gitignored)
+
+Rate limits, Turnstile, and quotas live in the **site route** — the engine has none of
+them, only the `X-HB-Auth` shared secret. So the developer path that bypasses every limit
+without building a production backdoor is simply: **run the engine locally and hit it
+directly**.
+
+- `dev/` directory, **listed in `.gitignore`** (as is `.env`): nothing in it can reach GitHub.
+- `dev/.env` (or root `.env`): `OPENAI_API_KEY`, `HB_MODEL`, `HB_SHARED_SECRET=devsecret`.
+- Run the engine: `uvicorn engine.main:app --port 8080` (or `docker build -f
+  engine/Dockerfile . && docker run --env-file .env -p 8080:8080 …`) — same code path as
+  production, zero rate limits.
+- `dev/loadtest.py` (to be written by the implementing agent; loads `.env` itself via
+  python-dotenv):
+  - Takes a glob of PDFs + concurrency flag; fires N parallel `/annotate` requests at
+    localhost (or, with the real secret, at the deployed HF engine — also skips site limits).
+  - Case matrix to cover: valid small doc, valid 42-page doc, 150-page doc, chunked book
+    path, scanned/no-text PDF (expect 422), password-protected (422), > page-cap (413/422),
+    corrupt bytes (422), unicode/ligature-heavy doc, two documents concurrently, repeat run
+    (expect full cache hit, zero LLM calls).
+  - Per-run report: status, wall time, token usage + estimated cost, retries, failed pages,
+    quote-match %, drop reasons — written to `dev/results/<timestamp>.json` so regressions
+    are diffable.
+- Testing against the *deployed* engine still spends real OpenAI tokens and shares the one
+  free container with real users — prefer localhost for volume runs, deployed for
+  smoke-verification only.
+- OCR/scanned-PDF support: explicitly **out of scope** for now; the harness just asserts
+  the friendly rejection.
+
+---
+
+## THE TASK QUEUE — implement in this order, one task per session
+
+Every product decision is already made (see "Decisions locked" in B6). When prompting an
+agent, say **"Implement Task N from BUILD_SPEC.md"** — no other context should be needed.
+
+**Task 1 — Reliability P0/P1** (from `outputs/ENGINE_SMOKE_TEST_AND_OPTIMIZATION_REPORT.md`
+§16, Priority 0 and 1): per-annotation renderer validation and isolation (one bad
+annotation must never 500 the document), rectangle clamping, character-length caps,
+distinguish valid-empty vs failed pages, never cache operational failures, deadline-aware
+retries, fail the document with a clear error when too many pages fail.
+*Done when:* the previously-failing Ch1 case renders; a synthetic bad-annotation test
+passes; failures appear in SSE progress and final metadata.
+
+**Task 2 — Dev harness** (B7): `dev/loadtest.py` + case matrix + per-run JSON reports.
+*Done when:* the full matrix runs green against the locally-run engine, including the
+cache-hit repeat and two-concurrent-documents cases.
+
+**Task 3 — Tiers, keys, and quotas** (B6, no payments yet): free limits 25 MB / 5-day /
+50 pages; access-key model in KV (mint, verify, expire, counters); tier-aware
+`/api/annotate` route; a dev-only key-minting script in `dev/` for testing paid flows.
+*Done when:* a dev-minted Teacher's Pet key gets 150 p/100 MB/10-day limits on a second
+device, and expiry produces the friendly renew message.
+
+**Task 4 — Professor's Pass book pipeline** (B6): chapter-aware chunking via `get_toc()`
+(fallback ~50-page parts), sequential chunk processing + stitching, per-chapter SSE
+progress checklist, encrypted 24 h result with key-gated re-download, credit consumed
+only on success, direct-to-engine upload for >100 MB, one-active-book admission,
+1,000-page cap with a friendly "split into two passes" over-cap message.
+*Done when:* a ~400-page book round-trips on the deployed engine with a dev-minted key
+showing chapters ticking off live; a no-TOC PDF falls back to part labels; a mid-run
+disconnect still allows re-download; a forced failure preserves the credit; a
+1,200-page file is rejected with the friendly message.
+
+**Task 5 — Stripe** (B6, only after Tasks 1–4): two Payment Links (three price points:
+$5/30-day, $40/365-day, $3.99/book), success-page session verification, idempotent key
+minting, BuyMeACoffee as a no-entitlement tip button, footer legal/refund line.
+*Done when:* the full B6 acceptance list passes in Stripe test mode.
+
+**Deferred, do not pick up:** custom domain (`hb-pdf.app`), OCR/scanned PDFs, model
+changes (B2 harness is future-only), Cloudflare Containers migration, Remotion promo.
+
 ### Iteration workflow (how the human works on this)
 
 Open this same project folder in the Codex app; its in-app browser previews `site/` while
@@ -219,7 +456,12 @@ B2, B3, B4) — one phase per session, run its acceptance criteria before moving
 | Hallucinated corrections | UI disclaimer; prompt favors hedged phrasing; brand as study companion, not fact-checker |
 | Film stills on the public site | Never — design reference only; generate original assets |
 | API key/secret leakage | Key only in engine secrets; site→engine authed by shared secret; nothing client-side |
-| Cost abuse | Turnstile + 3 docs/IP/day + 50-page/20 MB caps + per-page cache |
+| Cost abuse | Turnstile + tiered quotas (free 5/day/IP, pass 10/day + 100/mo per key) + page caps + per-page cache |
+| Key leak / sharing | A shared key burns its own quota — self-limiting; no fingerprinting needed |
+| Whale pass holders | Monthly ceiling (100 docs) bounds worst case at ~$23/user/mo; telemetry decides if pricing moves |
+| Big book OOMs the 1 GB Space | Sequential chapter chunks + 150 MB / 1,000-page caps + memory test in B6 acceptance; upgrade the Space instance with first revenue |
+| Stitched multi-book files on one $3.99 pass | 1,000-page cap bounds leakage at ~2 books per fee while every job stays profitable (break-even ~2,575 p); chapter progress list looks garbled for stitched files. Do NOT build stitch-detection unless telemetry shows real leakage |
+| Paying user loses a long-run result | Book results stored encrypted 24 h, re-downloadable by key; credit consumed only on success |
 | Cold container start | `sleepAfter: 15m` + cached sample doc keeps demos snappy; progress UI absorbs the rest |
 | Copyright of uploads | In-memory only, never stored, never public; "upload only content you may use" |
-| Noisy/ugly pages | ≤ 6 annotations/page, greedy margin push-down, seeded RNG → reproducible → debuggable |
+| Noisy/ugly pages | Density stays at 5–6/page by design (dense marginalia IS the product) — the fix is placement quality: rectangle clamping, correction wrapping, both-margin scoring, per-annotation render isolation (smoke report §16). Seeded RNG → reproducible → debuggable |
