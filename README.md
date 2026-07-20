@@ -92,5 +92,6 @@ See [engine/README.md](engine/README.md) for the service commands and
 - [x] Public website deployment
 - [x] Full local and deployed B7 matrices, including 150-page and 400-page cases
 - [x] Three one-time Stripe test products and Payment Links with success redirects
-- [ ] Add the Stripe test secret to Higgsfield and run all three test checkouts
-- [ ] Add the optional Buy Me a Coffee profile URL
+- [x] Stripe test secret installed; all three Sandbox checkouts mint the correct keys
+- [x] Adaptive Pricing and Dynamic Payment Methods verified with INR-first checkout and UPI
+- [x] Buy Me a Coffee tip link enabled (no entitlement)
