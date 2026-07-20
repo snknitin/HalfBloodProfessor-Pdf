@@ -80,6 +80,7 @@ _retry_rng = random.SystemRandom()
 _book_lock = asyncio.Lock()
 _background_book_tasks: set[asyncio.Task[Any]] = set()
 _redeemed_book_tokens: set[str] = set()
+_active_book_keys: set[str] = set()
 
 ProgressEvent = dict[str, Any]
 ProgressCallback = Callable[[ProgressEvent], Awaitable[None]]
@@ -205,7 +206,29 @@ async def annotate_book(
     token_id = _verify_book_token(x_hb_book_token, access_key)
     if token_id in _redeemed_book_tokens:
         raise HTTPException(status_code=409, detail="This Professor's Pass has already finished a book.")
-    pdf_bytes = await _read_pdf(request, BOOK_MAX_BYTES)
+    if access_key in _active_book_keys:
+        raise HTTPException(
+            status_code=409,
+            detail="This Professor's Pass already has a book on the professor's desk.",
+        )
+    try:
+        await asyncio.to_thread(latest_result, access_key)
+    except HTTPException as exc:
+        if exc.status_code not in {404, 410}:
+            raise
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail="This Professor's Pass has already finished a book.",
+        )
+
+    _redeemed_book_tokens.add(token_id)
+    _active_book_keys.add(access_key)
+    try:
+        pdf_bytes = await _read_pdf(request, BOOK_MAX_BYTES)
+    except Exception:
+        _active_book_keys.discard(access_key)
+        raise
     was_queued = _book_lock.locked()
 
     async def event_stream():
@@ -227,7 +250,12 @@ async def annotate_book(
 
         task = asyncio.create_task(run())
         _background_book_tasks.add(task)
-        task.add_done_callback(_background_book_tasks.discard)
+
+        def release_book(completed: asyncio.Task[Any]) -> None:
+            _background_book_tasks.discard(completed)
+            _active_book_keys.discard(access_key)
+
+        task.add_done_callback(release_book)
         try:
             while not task.done():
                 try:
@@ -462,8 +490,7 @@ async def _process_book(
     toc = await asyncio.to_thread(original_toc, pdf_bytes)
     stitched = await asyncio.to_thread(stitch_chunks, rendered_chunks, toc)
     result_id, expires_at = await asyncio.to_thread(save_encrypted_result, stitched, access_key)
-    callback_ok = await _notify_book_success(access_key, result_id)
-    _redeemed_book_tokens.add(token_id)
+    callback_ok = await _notify_book_success(access_key, result_id, expires_at)
     metadata = {
         "result_id": result_id,
         "expires_at": expires_at,
@@ -475,13 +502,15 @@ async def _process_book(
     return ProcessResult(b"", metadata)
 
 
-async def _notify_book_success(access_key: str, result_id: str) -> bool:
+async def _notify_book_success(access_key: str, result_id: str, expires_at: int) -> bool:
     callback_url = os.getenv("HB_BOOK_CALLBACK_URL")
     shared_secret = os.getenv("HB_SHARED_SECRET")
     if not callback_url or not shared_secret:
         # Local harness mode has no production KV. The successful result is still valid.
         return False
-    body = json.dumps({"access_key": access_key, "result_id": result_id}).encode("utf-8")
+    body = json.dumps(
+        {"access_key": access_key, "result_id": result_id, "expires_at": expires_at}
+    ).encode("utf-8")
 
     def notify() -> bool:
         request = urllib.request.Request(callback_url, data=body, method="POST")

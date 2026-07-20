@@ -463,6 +463,60 @@ class BookPipelineTests(unittest.TestCase):
 
 
 class BookCreditTests(unittest.IsolatedAsyncioTestCase):
+    async def test_book_authorization_is_reserved_before_stream_processing(self):
+        async def request_with_body():
+            sent = False
+
+            async def receive():
+                nonlocal sent
+                if sent:
+                    return {"type": "http.disconnect"}
+                sent = True
+                return {"type": "http.request", "body": b"pdf", "more_body": False}
+
+            return Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/annotate-book",
+                    "headers": [],
+                },
+                receive,
+            )
+
+        access_key = "hb-aaaa-bbbb-cccc-dddd"
+        main._redeemed_book_tokens.clear()
+        main._active_book_keys.clear()
+        try:
+            with (
+                patch("engine.main.latest_result", side_effect=HTTPException(404)),
+                patch("engine.main._verify_book_token", return_value="first-token-long-enough"),
+            ):
+                response = await main.annotate_book(
+                    await request_with_body(), access_key, "signed-token"
+                )
+            self.assertEqual(response.media_type, "text/event-stream")
+            self.assertIn("first-token-long-enough", main._redeemed_book_tokens)
+            self.assertIn(access_key, main._active_book_keys)
+
+            with patch("engine.main._verify_book_token", return_value="first-token-long-enough"):
+                with self.assertRaises(HTTPException) as replayed:
+                    await main.annotate_book(
+                        await request_with_body(), access_key, "signed-token"
+                    )
+            self.assertEqual(replayed.exception.status_code, 409)
+
+            with patch("engine.main._verify_book_token", return_value="second-token-long-enough"):
+                with self.assertRaises(HTTPException) as duplicate_key:
+                    await main.annotate_book(
+                        await request_with_body(), access_key, "another-signed-token"
+                    )
+            self.assertEqual(duplicate_key.exception.status_code, 409)
+            self.assertIn("already has a book", duplicate_key.exception.detail)
+        finally:
+            main._redeemed_book_tokens.clear()
+            main._active_book_keys.clear()
+
     async def test_failed_book_never_calls_success_credit_callback(self):
         plan = books.BookChunk(1, "Chapter One", 1, 1, "toc")
         progress = AsyncMock()
@@ -475,6 +529,35 @@ class BookCreditTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await main._process_book(b"source", "hb-aaaa-bbbb-cccc-dddd", "token-id-long-enough", progress)
         callback.assert_not_awaited()
+
+    async def test_success_callback_receives_exact_result_expiry(self):
+        plan = books.BookChunk(1, "Chapter One", 1, 1, "toc")
+        processed = main.ProcessResult(b"annotated", {"usage": {}})
+        progress = AsyncMock()
+        with (
+            patch("engine.main.inspect_book", return_value=(1, [plan])),
+            patch("engine.main.extract_chunk", return_value=b"chunk"),
+            patch("engine.main._process_pdf", AsyncMock(return_value=processed)),
+            patch("engine.main.original_toc", return_value=[]),
+            patch("engine.main.stitch_chunks", return_value=b"stitched"),
+            patch(
+                "engine.main.save_encrypted_result",
+                return_value=("result-id-long-enough", 1234567890),
+            ),
+            patch(
+                "engine.main._notify_book_success", AsyncMock(return_value=True)
+            ) as callback,
+        ):
+            result = await main._process_book(
+                b"source",
+                "hb-aaaa-bbbb-cccc-dddd",
+                "token-id-long-enough",
+                progress,
+            )
+        callback.assert_awaited_once_with(
+            "hb-aaaa-bbbb-cccc-dddd", "result-id-long-enough", 1234567890
+        )
+        self.assertTrue(result.metadata["credit_consumed"])
 
 
 class PromptContractTests(unittest.TestCase):
