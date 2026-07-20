@@ -1,8 +1,9 @@
 # hb-pdf engine
 
-Track B phase B1: an authenticated FastAPI service behind a Cloudflare Container
-Worker. PDF bodies and annotated results remain in memory. Only annotation JSON is
-cached, keyed by a hash; no PDF text or bytes are persisted.
+An authenticated FastAPI/PyMuPDF service deployed as a Hugging Face Docker Space.
+Source PDF bodies and chapter results remain in memory. Annotation JSON may be cached
+by hash. A completed Professor's Pass book is encrypted with its access key and kept
+on engine disk for at most 24 hours as delivery insurance.
 
 ## Local container
 
@@ -43,6 +44,19 @@ of failed pages (reported in metadata), but fails clearly instead of returning a
 misleading partial result when more than 20% of readable pages fail. Inference is
 deadline-aware; set `HB_DOCUMENT_DEADLINE_SECONDS` to override the 55-second
 default.
+
+## Whole-book route
+
+`POST /annotate-book` accepts up to 1,000 pages / 150 MB and requires
+`X-HB-Access-Key` plus a short-lived `X-HB-Book-Token` minted by the site. It emits an
+SSE plan and chapter start/done events, processes chapter-aware chunks sequentially,
+and returns a `result_id`. Download with `GET /book-result/{result_id}` and the same
+access-key header. Set:
+
+- `HB_BOOK_CALLBACK_URL=https://hb-pdf.higgsfield.app/api/book/complete`
+- `HB_BOOK_STORAGE_SECRET` to a separate random 32-byte value (recommended; the
+  shared secret is used as a fallback)
+- `HB_BOOK_RESULT_DIR` only when overriding the default `/tmp/hb-book-results`
 
 ## Cloudflare setup
 

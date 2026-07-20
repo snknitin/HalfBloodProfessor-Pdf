@@ -26,7 +26,7 @@ The no-payment production path is active: Higgsfield hosts the UI and server pro
 
 - `engine/main.py`: FastAPI `/annotate` and `/healthz`.
 - Raw PDF and SSE response modes.
-- 50-page and 20 MB validation.
+- Tier-aware 50/150-page and 25/100 MB chapter validation.
 - Scanned/non-searchable PDF rejection.
 - Concurrent per-page OpenAI Responses API calls.
 - Strict structured-output annotation schema.
@@ -35,7 +35,7 @@ The no-payment production path is active: Higgsfield hosts the UI and server pro
 - In-memory and optional KV annotation cache.
 - Shared-secret authentication with `X-HB-Auth`.
 - Cloudflare Worker, Durable Object/Container wrapper, Dockerfile, KV binding, and Wrangler config.
-- Six engine tests pass.
+- Twenty-five engine tests pass.
 - Wrangler dry-run and Docker image build pass.
 
 Root GitHub repository:
@@ -55,12 +55,26 @@ Root GitHub repository:
 - Original public sample PDF.
 - Turnstile client widget.
 - `/api/annotate` server route.
-- Hashed-IP KV rate-limit code for three documents/day.
+- Hashed-IP KV rate-limit code for five documents/day plus paid access-key quotas.
 - SSE progress UI, PDF preview, and download UI.
 - Required legal/privacy footer text.
 - Friendly limit, scanned-PDF, and rate-limit errors.
 - Production site returns HTTP 200.
 - Production sample round-trip returns an annotated PDF.
+
+### Tasks 2–5 implemented locally (not yet deployed)
+
+- The full 15-case B7 matrix passes, including the real 42-page sample, a 150-page
+  Teacher's Pet document, concurrent documents, a full-cache repeat, two 400-page
+  books, and the 1,200-page friendly rejection.
+- Access keys, expiry, 10/day and 100/month Teacher's Pet counters, and cross-device
+  browser storage are implemented and tested.
+- Professor's Pass chunk planning, live chapter progress, direct engine upload,
+  encrypted 24-hour recovery, success-only credit consumption, and one-active-book
+  admission are implemented and tested locally.
+- Stripe session verification and idempotent fulfillment are implemented. Actual
+  Stripe test-mode acceptance remains pending the account-owned Stripe test secret
+  and three Payment Links.
 
 ### Production runtime
 
@@ -97,6 +111,8 @@ Never commit any of these values.
 - `OPENAI_API_KEY`: reuse the working local OpenAI key.
 - `HB_MODEL`: `gpt-5.4-mini`.
 - `HB_SHARED_SECRET`: generate a random 32-byte value once.
+- `HB_BOOK_CALLBACK_URL`: `https://hb-pdf.higgsfield.app/api/book/complete`.
+- `HB_BOOK_STORAGE_SECRET`: a separate random 32-byte value for encrypted 24-hour results.
 
 ### Higgsfield site
 
@@ -104,6 +120,15 @@ Never commit any of these values.
 - `HB_SHARED_SECRET`: exact same value as the engine.
 - `TURNSTILE_SECRET`: private secret for the existing Turnstile widget.
 - `RATE_LIMIT_SALT`: a separate random 32-byte value.
+- `STRIPE_SECRET_KEY`: Stripe test secret (`sk_test_...`) until launch.
+- `STRIPE_MONTHLY_LINK`, `STRIPE_YEARLY_LINK`, `STRIPE_BOOK_LINK`: the three Stripe
+  Payment Link URLs. Configure each Link's post-payment redirect to
+  `https://hb-pdf.higgsfield.app/success?session_id={CHECKOUT_SESSION_ID}`.
+- `BUY_ME_A_COFFEE_URL`: optional tip URL; it grants no entitlement.
+
+The Stripe prices must be one-time USD payments of exactly `$5.00`, `$40.00`, and
+`$3.99`. The success route verifies the Checkout Session directly with Stripe before
+minting any key, and repeated visits return the same key.
 
 The OpenAI key belongs only on the engine. It must never be sent to the browser or stored in the site.
 
@@ -175,7 +200,7 @@ Do not translate `engine/main.py` into an ordinary Worker during a timed deploym
 ### B3 website follow-up
 
 - Complete one user-PDF round-trip from another device/phone.
-- Confirm the deployed site KV binding increments the three/day counter.
+- Confirm the deployed site KV binding increments the five/day counter.
 - Connect a PostHog project; capture hooks exist but no project is configured.
 
 ### B4 operations checklist
@@ -183,7 +208,7 @@ Do not translate `engine/main.py` into an ordinary Worker during a timed deploym
 - Confirm both KV bindings: engine cache and site rate limit.
 - Warm the bundled sample once and verify cache reuse.
 - Configure PostHog and verify the five specified events without filenames or content.
-- Test a real 20 MB request end to end.
+- Test real 25 MB free and 100 MB Teacher's Pet requests end to end.
 - Verify a request timeout of at least 60 seconds.
 - Put `tests/test_engine.py` and `tests/test_smoke.py` into CI.
 
@@ -202,7 +227,7 @@ Do not translate `engine/main.py` into an ordinary Worker during a timed deploym
 4. Sample button selects the original sample PDF.
 5. Annotation emits Reading/Thinking/Scribbling progress.
 6. Annotated PDF renders inline and downloads.
-7. Fourth request from the same IP/day returns 429.
+7. Sixth request from the same IP/day returns 429.
 8. 51-page PDF is rejected with the friendly limit message.
 9. Scanned PDF is rejected with the OCR guidance.
 10. No PDF bytes or extracted text appear in KV, logs, PostHog, R2, or D1.

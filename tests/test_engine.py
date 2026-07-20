@@ -6,7 +6,7 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -17,6 +17,7 @@ from starlette.requests import Request
 
 from engine import main
 from engine import render
+from engine import books
 from engine.prompts import ANNOTATION_SCHEMA
 from engine.validation import (
     MAX_CORRECTION_CHARS,
@@ -54,7 +55,7 @@ class FakeResponses:
     async def create(self, **kwargs):
         self.calls += 1
         assert kwargs["temperature"] == 0.3
-        assert kwargs["max_output_tokens"] == 700
+        assert kwargs["max_output_tokens"] == 1_400
         assert kwargs["text"]["format"]["strict"] is True
         return self.handler(kwargs)
 
@@ -70,7 +71,15 @@ class FakeResponses:
                 }
             ]
         }
-        return SimpleNamespace(output_text=json.dumps(payload))
+        return SimpleNamespace(
+            output_text=json.dumps(payload),
+            usage=SimpleNamespace(
+                input_tokens=120,
+                output_tokens=30,
+                input_tokens_details=SimpleNamespace(cached_tokens=20),
+                output_tokens_details=SimpleNamespace(reasoning_tokens=0),
+            ),
+        )
 
 
 def parse_sse(value):
@@ -129,6 +138,10 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fake_responses.calls, 2)
         self.assertEqual(first.pdf_bytes, second.pdf_bytes)
         self.assertEqual(first.metadata["skipped_pages"], [3])
+        self.assertEqual(first.metadata["usage"]["input_tokens"], 240)
+        self.assertEqual(first.metadata["usage"]["cached_input_tokens"], 40)
+        self.assertEqual(first.metadata["retries"], 0)
+        self.assertEqual(first.metadata["render"]["quote_match_percent"], 100.0)
         self.assertIn("thinking 3/3", [event["stage"] for event in progress])
         self.assertEqual(progress[-1]["stage"], "scribbling")
 
@@ -288,6 +301,7 @@ class RendererReliabilityTests(unittest.TestCase):
         self.assertGreaterEqual(len(rendered[0].get_drawings()), 1)
         rendered.close()
 
+
     def test_page_setup_failure_is_isolated_from_other_pages(self):
         pdf = make_pdf([page_text("page-one"), page_text("page-two")])
         annotations = [
@@ -388,6 +402,79 @@ class RendererReliabilityTests(unittest.TestCase):
         rendered = fitz.open(stream=rendered_bytes, filetype="pdf")
         self.assertEqual(rendered.page_count, 42)
         rendered.close()
+
+
+class BookPipelineTests(unittest.TestCase):
+    def setUp(self):
+        self.env = patch.dict(
+            os.environ,
+            {"HB_SHARED_SECRET": "test-secret", "HB_BOOK_RESULT_DIR": os.path.join(ROOT, ".test-book-results")},
+            clear=False,
+        )
+        self.env.start()
+
+    def tearDown(self):
+        result_dir = os.path.join(ROOT, ".test-book-results")
+        if os.path.isdir(result_dir):
+            for filename in os.listdir(result_dir):
+                os.unlink(os.path.join(result_dir, filename))
+            os.rmdir(result_dir)
+        self.env.stop()
+
+    def test_toc_chunks_follow_chapters_and_split_long_chapter(self):
+        toc = [[1, "Chapter One", 1], [1, "Chapter Two", 61], [2, "A detail", 70]]
+        chunks = books._plan_chunks(120, toc)
+        self.assertEqual(chunks[0].source, "toc")
+        self.assertEqual((chunks[0].start_page, chunks[0].end_page), (1, 50))
+        self.assertIn("Chapter One", chunks[0].title)
+        self.assertEqual(chunks[-1].end_page, 120)
+
+    def test_no_toc_falls_back_to_numbered_fifty_page_parts(self):
+        chunks = books._plan_chunks(120, [])
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[0].title, "Part 1 of 3 (pages 1-50)")
+        self.assertEqual((chunks[-1].start_page, chunks[-1].end_page), (101, 120))
+
+    def test_encrypted_result_requires_same_key_and_round_trips(self):
+        pdf = make_pdf([page_text("encrypted")])
+        result_id, _ = books.save_encrypted_result(pdf, "hb-aaaa-bbbb-cccc-dddd")
+        self.assertEqual(books.latest_result("hb-aaaa-bbbb-cccc-dddd")["result_id"], result_id)
+        self.assertEqual(books.load_encrypted_result(result_id, "hb-aaaa-bbbb-cccc-dddd"), pdf)
+        with self.assertRaises(HTTPException) as raised:
+            books.load_encrypted_result(result_id, "hb-zzzz-yyyy-xxxx-wwww")
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_encrypted_result_is_deleted_after_24_hours(self):
+        pdf = make_pdf([page_text("expiry")])
+        now = int(books.time.time())
+        with patch("engine.books.time.time", return_value=now):
+            result_id, _ = books.save_encrypted_result(pdf, "hb-aaaa-bbbb-cccc-dddd")
+        with patch("engine.books.time.time", return_value=now + books.RESULT_TTL_SECONDS + 1):
+            with self.assertRaises(HTTPException) as raised:
+                books.load_encrypted_result(result_id, "hb-aaaa-bbbb-cccc-dddd")
+        self.assertEqual(raised.exception.status_code, 410)
+
+    def test_1200_pages_get_friendly_split_message(self):
+        pdf = make_pdf(["short"] * 1200)
+        with self.assertRaises(HTTPException) as raised:
+            books.inspect_book(pdf)
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("split it into two passes", raised.exception.detail)
+
+
+class BookCreditTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_book_never_calls_success_credit_callback(self):
+        plan = books.BookChunk(1, "Chapter One", 1, 1, "toc")
+        progress = AsyncMock()
+        with (
+            patch("engine.main.inspect_book", return_value=(1, [plan])),
+            patch("engine.main.extract_chunk", return_value=b"chunk"),
+            patch("engine.main._process_pdf", AsyncMock(side_effect=RuntimeError("forced failure"))),
+            patch("engine.main._notify_book_success", AsyncMock()) as callback,
+        ):
+            with self.assertRaises(RuntimeError):
+                await main._process_book(b"source", "hb-aaaa-bbbb-cccc-dddd", "token-id-long-enough", progress)
+        callback.assert_not_awaited()
 
 
 class PromptContractTests(unittest.TestCase):

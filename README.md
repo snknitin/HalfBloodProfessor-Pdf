@@ -21,27 +21,31 @@ Public site: **https://hb-pdf.higgsfield.app**
 
 ## Current architecture
 
-1. The Higgsfield site accepts a PDF, verifies Cloudflare Turnstile, and enforces three
-   free requests per IP hash per day with KV.
-2. Its server route streams the file to the authenticated Cloudflare engine.
+1. The Higgsfield site accepts a PDF, verifies Cloudflare Turnstile, and enforces five
+   free requests per IP hash per day or paid access-key quotas with KV.
+2. Its server route streams chapters to the authenticated Hugging Face engine. Whole
+   books upload directly to the engine with a short-lived, site-signed authorization.
 3. FastAPI extracts text with PyMuPDF and calls OpenAI once per page with a strict
    structured-output schema.
 4. The unchanged Track A renderer maps exact quotes to coordinates and returns the
-   annotated PDF as a streamed result.
+   annotated PDF as a streamed result. Whole books run in chapter-aware chunks and the
+   encrypted result remains recoverable with its access key for 24 hours.
 
 | Part | Implementation |
 | --- | --- |
 | Website | React 19 + TanStack Start on Higgsfield |
 | API protection | Cloudflare Turnstile + server-side secret verification |
-| Rate limit | 3 annotations per IP hash per UTC day in KV |
-| Engine | FastAPI + PyMuPDF in a Cloudflare Container |
+| Rate limit | Free IP quota plus Teacher's Pet and Professor's Pass keys in KV |
+| Engine | FastAPI + PyMuPDF in a free Hugging Face Docker Space |
 | LLM | OpenAI Responses API, `gpt-5.4-mini`, strict structured outputs |
-| Storage | No PDF storage; annotation JSON cache only |
+| Storage | Sources never stored; completed books encrypted on engine disk for 24 hours |
 
 ## Limits
 
 - Searchable, digital-text PDFs only; scanned PDFs need OCR first.
-- Up to 50 pages and 20 MB.
+- Free: 50 pages, 25 MB, 5 documents/day.
+- Teacher's Pet: 150 pages, 100 MB, 10/day and 100/month.
+- Professor's Pass: one book up to 1,000 pages and 150 MB.
 - English-first annotations.
 
 ## Local renderer quickstart
@@ -60,21 +64,11 @@ docker build -f engine/Dockerfile -t hb-pdf-engine .
 docker run --rm hb-pdf-engine python -m unittest discover -s tests -p test_engine.py
 ```
 
-## Production activation
+## Production configuration
 
-The visual site is deployed. The upload API becomes live after these account-owned
-secrets are entered:
-
-1. Register this Cloudflare account's `workers.dev` subdomain once at the
-   [Workers onboarding page](https://dash.cloudflare.com/5e38dd8c3a09cad103db7c0d5139f40c/workers/onboarding).
-2. From `engine/`, deploy the Worker and enter the OpenAI key only at Wrangler's hidden
-   prompt:
-
-```powershell
-cd engine
-npm run deploy
-npx.cmd wrangler secret put OPENAI_API_KEY
-```
+The visual site and chapter engine are already deployed. The OpenAI key stays only in
+the Hugging Face Space. See [DEPLOYMENT_HANDOFF.md](DEPLOYMENT_HANDOFF.md) for the exact
+Hugging Face and Higgsfield variables required by the tier, book, and Stripe features.
 
 `HB_MODEL` is not another key. It is the model name, currently `gpt-5.4-mini`.
 `HB_SHARED_SECRET` is not purchased or acquired from a provider. It is a random private
@@ -89,10 +83,12 @@ See [engine/README.md](engine/README.md) for the service commands and
 
 - [x] Track A deterministic PDF renderer
 - [x] Track B1 authenticated engine, structured OpenAI calls, caching, SSE, tests
-- [x] 50-page and 20 MB validation
+- [x] Free and Teacher's Pet tier limits and access-key quotas
+- [x] Chapter-aware whole-book pipeline and encrypted 24-hour recovery
+- [x] Stripe paid-session fulfillment routes and receipt-key recovery
 - [x] Higgsfield website, responsive upload UI, sample PDF, preview, download
 - [x] Turnstile widget and server verification path
 - [x] KV daily rate-limit path
 - [x] Public website deployment
-- [ ] One-time Cloudflare Workers subdomain registration
-- [ ] Account-owned production secret entry and final live API round-trip
+- [x] Full local B7 matrix, including 150-page and 400-page cases
+- [ ] Add Stripe test secret and three Payment Link URLs, then run test checkouts
