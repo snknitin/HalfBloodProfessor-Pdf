@@ -118,6 +118,23 @@ def _render_page(page, page_number, annotations, rng, report):
             if not rects:
                 _drop(report, page_number, kind, "unmatched_quote")
                 continue
+            if kind == "bracket":
+                start = rects[0]
+                end_quote = annotation.get("end_quote")
+                if end_quote:
+                    endings = [
+                        rect
+                        for found in find_quote(page, end_quote)
+                        if (rect := _clamp_rect(found, bounds, _mark_padding(kind)))
+                        is not None
+                        and rect.y1 >= start.y0
+                    ]
+                    if not endings:
+                        _drop(report, page_number, kind, "unmatched_end_quote")
+                        continue
+                    rects = [start, endings[-1]]
+                else:
+                    rects = [start]
             report.quotes_matched += 1
             resolved.append((rects[0].y0, annotation, rects))
         except Exception as exc:
@@ -135,7 +152,7 @@ def _render_page(page, page_number, annotations, rng, report):
 def _render_one(page, bounds, margins, annotation, rects, rng, report):
     page_number = page.number + 1
     kind = annotation["type"]
-    color = _annotation_color(kind, rng)
+    color = _annotation_color(annotation, rng)
     shape = page.new_shape()  # never share partially-built drawing commands
 
     if kind == "diagram":
@@ -159,7 +176,14 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
             _drop(report, page_number, kind, "unsafe_geometry")
             return
         scribe.chain_diagram(
-            page, shape, area, annotation["labels"], rng, annotation.get("title"), color=color
+            page,
+            shape,
+            area,
+            annotation["labels"],
+            rng,
+            annotation.get("title"),
+            color=color,
+            text_color=scribe.INK,
         )
         if diagram_side == "bottom":
             margins.commit("bottom", area.y1)
@@ -171,7 +195,7 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
         for rect in rects:
             scribe.strike(shape, rect, rng, color=color)
         correction = scribe.correction_text(
-            page, first, annotation["correction"], rng, page_rect=bounds, color=color
+            page, first, annotation["correction"], rng, page_rect=bounds, color=scribe.INK
         )
         if correction is None:
             _drop(report, page_number, "correction", "no_space")
@@ -185,7 +209,7 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
             scribe.highlight(shape, rect, rng, color=color)
     elif kind == "scribble":
         for rect in rects:
-            scribe.scribble(shape, rect, rng, color=color)
+            scribe.strike(shape, rect, rng, color=color)
     elif kind == "doodle":
         center = _clamp_point(
             (margins.gutter_x(first), first.y0 + first.height / 2), bounds, 8
@@ -193,22 +217,50 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
         scribe.doodle(shape, center, rng, annotation["symbol"], color=color)
     elif kind == "margin":
         scribe.underline(shape, first, rng, color=color)
+    elif kind == "bracket":
+        span = fitz.Rect(first)
+        for rect in rects[1:]:
+            span.include_rect(rect)
+        bracket_side = "left" if margins.left.width >= margins.right.width else "right"
+        scribe.bracket(shape, span, rng, side=bracket_side, color=color)
+    elif kind == "list":
+        center = _clamp_point(
+            (margins.gutter_x(first), first.y0 + first.height / 2), bounds, 8
+        )
+        scribe.list_marker(shape, center, rng, color=color)
+    elif kind == "checkmark":
+        center = _clamp_point(
+            (margins.gutter_x(first), first.y0 + first.height / 2), bounds, 8
+        )
+        scribe.checkmark(shape, center, rng, color=color)
+    elif kind == "callout":
+        center = _clamp_point(
+            (margins.gutter_x(first), first.y0 + first.height / 2), bounds, 8
+        )
+        scribe.callout_icon(shape, center, rng, annotation["icon"], color=color)
 
     note = annotation.get("note")
+    if kind == "list":
+        parts = list(annotation["items"])
+        if annotation.get("title"):
+            parts.insert(0, annotation["title"])
+        note = " | ".join(parts)
+    elif kind == "checkmark":
+        note = annotation.get("counter")
     if note:
-        box, side = margins.place(first.y0, note)
+        box, side = margins.place(first.y0, note, rng=rng)
         box = _clamp_rect(box, bounds, 8) if box is not None else None
         if box is None or box.width < 12 or box.height < 8:
             _drop(report, page_number, "note", "no_space")
         else:
-            used = scribe.note_text(page, box, note, rng, color=color)
+            used = scribe.note_text(page, box, note, rng, color=scribe.INK)
             if used is not None:
                 used = _clamp_rect(used, bounds, 3)
             if used is None:
                 _drop(report, page_number, "note", "unsafe_geometry")
             else:
                 margins.commit(side, used.y1)
-                if kind == "circle":
+                if kind in {"circle", "margin", "bracket", "list", "callout"} or len(note.split()) >= 18:
                     if side == "left":
                         src = (used.x1 - 2, used.y0 + 6)
                         dst = (first.x0 - 7, first.y0 + first.height / 2)
@@ -225,16 +277,27 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
     shape.commit()
 
 
-def _annotation_color(kind: str, rng):
+def _annotation_color(annotation: dict[str, Any], rng):
+    kind = annotation["type"]
     if kind == "strike":
         return scribe.INK_RED
     if kind == "highlight":
-        return rng.choice(
-            [scribe.HIGHLIGHT, scribe.HIGHLIGHT_BLUE, scribe.HIGHLIGHT_GREEN, scribe.HIGHLIGHT_ROSE]
-        )
+        return {
+            "key": scribe.HIGHLIGHT,
+            "example": scribe.HIGHLIGHT_ORANGE,
+            "definition": scribe.HIGHLIGHT_BLUE,
+            "evidence": scribe.HIGHLIGHT_GREEN,
+            "caution": scribe.HIGHLIGHT_RED,
+        }.get(annotation.get("meaning", "key"), scribe.HIGHLIGHT)
     if kind == "diagram":
         return scribe.INK_BLUE
-    return rng.choice([scribe.INK, scribe.INK_BLUE, scribe.INK_GREEN, scribe.INK_PURPLE])
+    if kind == "checkmark":
+        return scribe.INK_GREEN
+    if kind in {"circle", "doodle", "bracket", "list", "callout"}:
+        return rng.choice([scribe.INK_BLUE, scribe.INK_GREEN, scribe.INK_PURPLE])
+    if kind in {"underline", "margin"}:
+        return rng.choice([scribe.INK, scribe.INK_BLUE, scribe.INK_PURPLE])
+    return scribe.INK
 
 
 def _decorate_blank_interior_pages(doc, rng, report: RenderReport) -> None:
@@ -293,7 +356,16 @@ def _clamp_point(point, bounds: fitz.Rect, padding: float) -> tuple[float, float
 
 
 def _mark_padding(kind: str) -> float:
-    return {"circle": 24, "doodle": 8, "underline": 4, "highlight": 3}.get(kind, 3)
+    return {
+        "circle": 24,
+        "bracket": 10,
+        "doodle": 8,
+        "list": 8,
+        "checkmark": 8,
+        "callout": 8,
+        "underline": 4,
+        "highlight": 3,
+    }.get(kind, 3)
 
 
 def _diagram_fits(area: fitz.Rect, labels: list[str], title: str | None = None) -> bool:

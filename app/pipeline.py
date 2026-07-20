@@ -54,8 +54,10 @@ class Margins:
         side = "left" if self.left.width >= self.right.width else "right"
         return side, (self.left if side == "left" else self.right)
 
-    def place(self, y, text):
+    def place(self, y, text, rng=None):
         """Reserve a rect for `text` near anchor y. Caller must commit() the rect actually used."""
+        if rng is not None:
+            y += rng.uniform(-12, 16)
         candidates = []
         for side, box in (("left", self.left), ("right", self.right)):
             if box.width < 48:
@@ -63,7 +65,8 @@ class Margins:
             h = scribe.note_height(text, box.width - 4)
             y0 = max(y - 4, self.cursor[side])
             if y0 + h <= box.y1:
-                candidates.append((abs(y0 - y), -box.width, side, box, y0, h))
+                tie_break = rng.uniform(0, 8) if rng is not None else 0
+                candidates.append((abs(y0 - y) + tie_break, -box.width, side, box, y0, h))
         if candidates:
             _, _, side, box, y0, h = min(candidates)
             return fitz.Rect(box.x0 + 2, y0, box.x1 - 2, y0 + h + 4), side

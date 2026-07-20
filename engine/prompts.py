@@ -8,23 +8,34 @@ from engine.validation import (
     MAX_QUOTE_CHARS,
 )
 
-PROMPT_VERSION = "b1-v5-expert-study-marginalia"
+PROMPT_VERSION = "b1-v7-natural-expert-marks"
 
 SYSTEM_PROMPT = """You are a current subject-matter expert and unusually smart student
-annotating one textbook page in several pens. The finished page should feel genuinely
-owned, studied, corrected, and made easier to remember - not mechanically fact-checked.
+annotating one textbook page by hand. The finished page should feel genuinely owned,
+studied, corrected, and made easier to remember - not mechanically fact-checked or
+decorated by a template.
 
-Return only annotations anchored to the supplied page. Aim for 5-6 useful annotations on
-a content-dense page and mix at least three mark types. On dense pages, usually include
-one highlight and at least two note-bearing marks.
+Return only annotations anchored to the supplied page. Produce 8-10 meaningful annotations
+on a content-dense page and 5-8 on a lighter readable page. Mix at least four mark types.
+Usually include 2-3 highlights and at least four note-bearing marks. Do not leave obvious
+margin or bottom whitespace unused when the page contains concepts worth explaining.
 Balance the page across these jobs:
 - Correct a definite error, outdated claim, weak method, or misleading simplification.
 - Compress the core idea into plain English, including what an equation means in words.
-- Add one vivid but brief analogy, concrete example, memory hook, mnemonic, acronym, or
-  one-line plot summary when it makes the idea faster to understand.
+- Add a vivid, specific analogy or concrete example when it genuinely improves intuition.
+  It may be 20-36 words and span several handwritten lines; do not force it into a flimsy
+  slogan. Short memory hooks, mnemonics, acronyms, and one-line plot summaries are also useful.
 - Mark an exam-worthy definition, assumption, caveat, causal step, or key contrast.
 - Use a 2-5 node diagram for a process, dependency, hierarchy, comparison, or feedback
   loop when spatial structure teaches better than another sentence.
+- Even without a correction, underline, circle, or highlight important terms, concepts,
+  definitions, and claims so a studied page never feels untouched.
+- Bracket a full paragraph or section when its combined argument matters more than one
+  sentence. Use a list beside dense narrative when 2-5 steps, events, or claims should scan.
+- Add a checkmark to unusually strong evidence. If it still has a limitation, attach a
+  concise counterpoint rather than pretending the evidence is absolute.
+- Use compact callout symbols sparingly: question for a hidden assumption, warning for a
+  failure mode, practice for hands-on advice, and definition for a term worth mastering.
 
 The voice is terse, warm, clever, and confident, with occasional playful wit. Never add
 generic praise or filler. Do not invent a correction or a current fact when uncertain;
@@ -33,20 +44,34 @@ prefer an explainer, analogy, or question instead.
 Safety and layout rules:
 - Every quote must be a verbatim substring of the page containing 3-8 words.
 - Never start or end a quote inside a hyphen-wrapped or line-split word.
-- Emit at most 6 annotations for this page.
-- Notes are at most 14 words. Corrections are at most 5 words.
+- Emit at most 10 annotations for this page.
+- Notes may use up to 36 words when the explanation earns the space. Corrections are at
+  most 8 words. Use " | " between two compact bullet-like points when useful.
+- Prefer mostly black handwritten note text. Color belongs to highlights, underlines,
+  circles, arrows, diagrams, and small doodles - never to ordinary note prose.
+- Highlight colors carry one stable meaning across every file: key = yellow, example =
+  orange, definition = blue, evidence = green, and caution = red. Choose meaning by the
+  passage's study role; never use highlight color merely for visual variety.
+- Place ideas at naturally relevant anchors. Vary note lengths and mark types rather than
+  spacing six similarly sized notes at regular intervals.
+- Use a clean single strike for incorrect text and write the replacement nearby. Never
+  use cross-hatching, zig-zag scratches, or a dense scribble over readable text.
+- A longer note should be connected by a simple line or arrow to the marked passage.
 - Use a diagram whenever a short 2-5 node flow genuinely clarifies the page.
 - Do not emit coordinates or page numbers. The deterministic renderer owns geometry.
-- If nothing merits expert ink, return an empty annotations array.
+- Return an empty annotations array only for a truly blank, unreadable, or non-content page.
 
 Allowed annotation forms:
 - underline: quote, optional note, and double
 - strike: quote, correction, and optional note
 - circle: quote and note
-- highlight: quote
-- scribble: quote and note
+- highlight: quote and meaning (key, example, definition, evidence, or caution)
 - doodle: quote and symbol (star, asterisk, or exclaim)
 - margin: quote and note
+- bracket: opening quote, optional ending quote, and note
+- list: quote, optional title, and 2-5 items
+- checkmark: quote and optional counterpoint
+- callout: quote, icon (question, warning, practice, or definition), and note
 - diagram: optional title and 2-5 labels
 """
 
@@ -76,7 +101,7 @@ ANNOTATION_SCHEMA = {
     "properties": {
         "annotations": {
             "type": "array",
-            "maxItems": 6,
+            "maxItems": 10,
             "items": {
                 "anyOf": [
                     _object(
@@ -113,16 +138,12 @@ ANNOTATION_SCHEMA = {
                         {
                             "type": {"type": "string", "const": "highlight"},
                             "quote": _QUOTE,
+                            "meaning": {
+                                "type": "string",
+                                "enum": ["key", "example", "definition", "evidence", "caution"],
+                            },
                         },
-                        ["type", "quote"],
-                    ),
-                    _object(
-                        {
-                            "type": {"type": "string", "const": "scribble"},
-                            "quote": _QUOTE,
-                            "note": _NOTE,
-                        },
-                        ["type", "quote", "note"],
+                        ["type", "quote", "meaning"],
                     ),
                     _object(
                         {
@@ -142,6 +163,62 @@ ANNOTATION_SCHEMA = {
                             "note": _NOTE,
                         },
                         ["type", "quote", "note"],
+                    ),
+                    _object(
+                        {
+                            "type": {"type": "string", "const": "bracket"},
+                            "quote": _QUOTE,
+                            "end_quote": {"anyOf": [_QUOTE, {"type": "null"}]},
+                            "note": _NOTE,
+                        },
+                        ["type", "quote", "end_quote", "note"],
+                    ),
+                    _object(
+                        {
+                            "type": {"type": "string", "const": "list"},
+                            "quote": _QUOTE,
+                            "title": {
+                                "anyOf": [
+                                    {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": MAX_DIAGRAM_TITLE_CHARS,
+                                    },
+                                    {"type": "null"},
+                                ]
+                            },
+                            "items": {
+                                "type": "array",
+                                "minItems": 2,
+                                "maxItems": 5,
+                                "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": MAX_DIAGRAM_LABEL_CHARS,
+                                },
+                            },
+                        },
+                        ["type", "quote", "title", "items"],
+                    ),
+                    _object(
+                        {
+                            "type": {"type": "string", "const": "checkmark"},
+                            "quote": _QUOTE,
+                            "counter": {"anyOf": [_NOTE, {"type": "null"}]},
+                        },
+                        ["type", "quote", "counter"],
+                    ),
+                    _object(
+                        {
+                            "type": {"type": "string", "const": "callout"},
+                            "quote": _QUOTE,
+                            "icon": {
+                                "type": "string",
+                                "enum": ["question", "warning", "practice", "definition"],
+                            },
+                            "note": _NOTE,
+                        },
+                        ["type", "quote", "icon", "note"],
                     ),
                     _object(
                         {
