@@ -276,6 +276,54 @@ def note_text(page, box, text, rng, fontsize=11.5, fontfile=NOTE_FONT, fontname=
     return used
 
 
+def node_text(page, box, text, rng, fontsize=9.5, color=INK):
+    """Centered, tightly rotated handwriting for text inside a diagram node."""
+    fs = fontsize
+    inner = fitz.Rect(box.x0 + 6, box.y0 + 3, box.x1 - 6, box.y1 - 3)
+    while fs > 6.5:
+        lines = _wrap_lines(_note_font, text, fs, inner.width)
+        line_height = fs * 1.12
+        if len(lines) * line_height <= inner.height:
+            break
+        fs -= 0.5
+    lines = _wrap_lines(_note_font, text, fs, inner.width)
+    line_height = fs * 1.12
+    block_height = len(lines) * line_height
+    baseline = inner.y0 + max(0, (inner.height - block_height) / 2) + fs
+    pivot = fitz.Point(box.x0 + box.width / 2, box.y0 + box.height / 2)
+    matrix = fitz.Matrix(1, 1)
+    matrix.prerotate(rng.uniform(-0.7, 0.7))
+    for line in lines:
+        width = _note_font.text_length(line, fs)
+        x = inner.x0 + max(0, (inner.width - width) / 2)
+        page.insert_text(
+            fitz.Point(x, baseline),
+            line,
+            fontname="Caveat",
+            fontfile=NOTE_FONT,
+            fontsize=fs,
+            color=color,
+            morph=(pivot, matrix),
+        )
+        baseline += line_height
+
+
+def _vertical_node_metrics(text, width, preferred_fs=9.5):
+    """Return a font size and bubble dimensions that contain wrapped node text."""
+    max_width = max(36.0, width)
+    fs = preferred_fs
+    while fs > 6.5:
+        lines = _wrap_lines(_note_font, text, fs, max_width - 14)
+        if len(lines) <= 2:
+            break
+        fs -= 0.5
+    lines = _wrap_lines(_note_font, text, fs, max_width - 14)
+    text_width = max((_note_font.text_length(line, fs) for line in lines), default=22)
+    bubble_width = min(max_width, max(36.0, text_width + 14))
+    bubble_height = max(fs * 1.9, len(lines) * fs * 1.12 + 8)
+    return fs, bubble_width, bubble_height
+
+
 def correction_text(page, anchor_rect, text, rng, page_rect=None, color=INK):
     """Scrawl a correction near its strike.
 
@@ -313,13 +361,19 @@ def correction_text(page, anchor_rect, text, rng, page_rect=None, color=INK):
     return note_text(page, box, text, rng, fontsize=fs, fontfile=SCRAWL_FONT, fontname="HomemadeApple", color=color)
 
 
-def diagram_height(labels, title=None, layout="chain", fs=9.5):
+def diagram_height(labels, title=None, layout="chain", fs=9.5, width=None):
     """Height a diagram needs when rendered in a narrow margin."""
+    node_labels = list(labels)
     if layout in {"tree", "math"}:
         # Narrow areas use the safe vertical fallback in the specialized
         # renderers: root/result plus each child/input.
-        return (len(labels) + 1) * (fs * 1.9 + 15)
-    return len(labels) * (fs * 1.9 + 15) + (16 if title else 0)
+        node_labels = ([title] if title else []) + node_labels
+        title = None
+    if width is not None:
+        heights = [_vertical_node_metrics(label, width - 4, fs)[2] for label in node_labels]
+        return sum(heights) + max(0, len(heights) - 1) * 15 + (16 if title else 0)
+    # Conservative two-line allowance when the target width is not yet known.
+    return len(node_labels) * (fs * 2.24 + 23) + (16 if title else 0)
 
 
 def chain_diagram(
@@ -344,7 +398,7 @@ def chain_diagram(
             h = fs * 1.9
             r = fitz.Rect(x, cy - h / 2, x + w, cy + h / 2)
             circle(shape, r + (2, 2, -2, -2), rng, color=color)
-            note_text(page, fitz.Rect(r.x0 + 6, r.y0 + h * 0.18, r.x1 + 10, r.y1 + 4), t, rng, fontsize=fs, color=text_color)
+            node_text(page, r, t, rng, fontsize=fs, color=text_color)
             if prev_edge is not None:
                 arrow(shape, (prev_edge + 3, cy + rng.uniform(-1.5, 1.5)),
                       (r.x0 - 8, cy + rng.uniform(-1.5, 1.5)), rng, color=color)
@@ -361,11 +415,10 @@ def chain_diagram(
         prev_bottom = None
         cx = area.x0 + area.width / 2
         for t in labels:
-            h = fs * 1.9
-            w = min(area.width - 4, _note_font.text_length(t, fs) + 14)
+            node_fs, w, h = _vertical_node_metrics(t, area.width - 4, fs)
             r = fitz.Rect(cx - w / 2, y, cx + w / 2, y + h)
             circle(shape, r + (2, 2, -2, -2), rng, color=color)
-            note_text(page, fitz.Rect(r.x0 + 6, r.y0 + h * 0.18, r.x1 + 10, r.y1 + 4), t, rng, fontsize=fs, color=text_color)
+            node_text(page, r, t, rng, fontsize=node_fs, color=text_color)
             if prev_bottom is not None:
                 arrow(shape, (cx + rng.uniform(-2, 2), prev_bottom + 2),
                       (cx + rng.uniform(-2, 2), r.y0 - 3), rng, color=color)
@@ -402,7 +455,7 @@ def tree_diagram(
         area.y0 + 3 + h,
     )
     circle(shape, root + (2, 2, -2, -2), rng, color=color)
-    note_text(page, root + (6, h * 0.18, 10, 4), title, rng, fontsize=fs, color=text_color)
+    node_text(page, root, title, rng, fontsize=fs, color=text_color)
 
     child_widths = [_note_font.text_length(text, fs) + 14 for text in labels]
     gap = 12
@@ -414,7 +467,7 @@ def tree_diagram(
         arrow(shape, (root.x0 + root.width / 2, root.y1 + 3),
               (child.x0 + child.width / 2, child.y0 - 3), rng, color=color)
         circle(shape, child + (2, 2, -2, -2), rng, color=color)
-        note_text(page, child + (6, h * 0.18, 10, 4), text, rng, fontsize=fs, color=text_color)
+        node_text(page, child, text, rng, fontsize=fs, color=text_color)
         x = child.x1 + gap
 
 
@@ -452,14 +505,14 @@ def equation_diagram(
             x += 18
         operand = fitz.Rect(x, cy - h / 2, x + width, cy + h / 2)
         circle(shape, operand + (2, 2, -2, -2), rng, color=color)
-        note_text(page, operand + (6, h * 0.18, 10, 4), text, rng, fontsize=fs, color=text_color)
+        node_text(page, operand, text, rng, fontsize=fs, color=text_color)
         previous = operand
         x = operand.x1
 
     result = fitz.Rect(x + 34, cy - h / 2, x + 34 + result_width, cy + h / 2)
     arrow(shape, (previous.x1 + 4, cy), (result.x0 - 5, cy), rng, color=color)
     circle(shape, result + (2, 2, -2, -2), rng, color=color)
-    note_text(page, result + (6, h * 0.18, 10, 4), title, rng, fontsize=fs, color=text_color)
+    node_text(page, result, title, rng, fontsize=fs, color=text_color)
 
 
 def blank_page_doodle(page, shape, bounds, rng, color=INK_BLUE):

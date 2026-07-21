@@ -233,3 +233,5 @@ videos/HB-pdf.mp4
 .env
 dev/
 .env.example
+.pnpm-store/v11/projects/bd081ac0cff6ef65328dc1ebc28aada8
+.pnpm-store/v11/index.db
