@@ -1,0 +1,45 @@
+name: Feature request
+description: Suggest a useful improvement for hb-pdf
+title: "[Idea]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve hb-pdf. Do not attach private PDFs, access keys, or API keys.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the reading or annotation problem, not just the proposed button or screen.
+      placeholder: When I study a chapter, I need...
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would make it better?
+      placeholder: A useful version could...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part is this about?
+      options:
+        - Annotation quality
+        - PDF upload or download
+        - Whole-book flow
+        - Payments or access keys
+        - Website experience
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I have not included a private PDF, access key, API key, or personal document text.
+          required: true

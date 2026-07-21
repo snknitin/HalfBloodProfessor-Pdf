@@ -436,6 +436,156 @@ $5.99/30-day, $49.99/365-day, $4.99/book), success-page session verification, id
 minting, BuyMeACoffee as a no-entitlement tip button, footer payment-policy line.
 *Done when:* the full B6 acceptance list passes in Stripe test mode.
 
+**Task 6 — Feedback, sharing & feature-request intake** (independent of Tasks 1–5; can
+ship anytime). Goal: let regular users react, share, and send feedback that lands in
+snk.nitin@gmail.com pre-sorted, and route power users to GitHub — reusing the site's
+existing Turnstile + KV + PostHog. **Design principle: zero resistance — the lightest
+signal must cost one tap and zero typing; a layperson interacts without a form, account,
+or decision. Never force a text box; reveal it only after a tap, always optional.**
+
+#### Locked implementation decisions
+
+- **Email provider: Resend.** Use its REST API directly from the site Worker (no SDK is
+  necessary). Store `RESEND_API_KEY` and `HB_FEEDBACK_TO_EMAIL` as Higgsfield Worker
+  secrets; never hardcode either value in client or server source. Until a custom domain
+  exists, send from `HB PDF <onboarding@resend.dev>`. Resend permits that testing sender
+  to deliver only to the email address associated with the Resend account, so create the
+  account with the destination Gmail address. At implementation time, verify the current
+  free quota and sender restriction against Resend's official documentation.
+- **PostHog must be explicitly initialized.** The current `window.posthog?.capture(...)`
+  calls are no-ops unless Higgsfield injects PostHog externally; do not assume that it
+  does. Configure the public PostHog project token and API host, initialize the client
+  once, and keep capture calls safe when analytics is unavailable. A PostHog project
+  token is public configuration, not a server secret. Do not send PDF content, filename,
+  access key, feedback text, or email address to PostHog.
+- **Anonymous job correlation:** generate a fresh `crypto.randomUUID()` in the browser
+  when each chapter/book annotation starts. Reuse that ID for its start, completion,
+  failure, reaction, and feedback events. It is an opaque correlation ID only — never
+  derive it from the PDF, filename, access key, email, or IP.
+- **Written feedback gets its own Turnstile token.** Turnstile tokens are single-use;
+  never reuse an upload/book token. Render/reset a dedicated feedback widget only after
+  the user elects to send text. Bare one-tap reactions do not require Turnstile.
+- **KV is a soft abuse limiter, not an atomic quota.** Workers KV is eventually
+  consistent, so the 5/IP/day read-modify-write counter is sufficient for ordinary spam
+  and repeated submissions but cannot guarantee rejection of a coordinated concurrent
+  flood. Do not add a Durable Object for this task. Turnstile + honeypot + strict payload
+  caps + the KV soft limit + Resend's provider quotas are the layered controls. If abuse
+  appears in telemetry, move the counter to a Durable Object or Cloudflare rate-limiting
+  rule later.
+- **Accurate privacy language:** “store nothing” means the hb-pdf application does not
+  persist the feedback payload in KV, D1, R2, logs, or any application database. Resend
+  and Gmail necessarily process and retain the delivered email. The site policy must say
+  this plainly and disclose the optional reply email, submitted message, browser context,
+  and temporary salted IP-hash rate-limit record. Never log request bodies.
+
+- **Post-download success card is the primary surface** (highest-intent moment). Three
+  rows, in increasing order of effort:
+  1. **One-tap reaction** — `😍 🙂 😐 😞` (or 👍/👎). A single click fires instantly, no
+     modal, no Turnstile challenge. *Only after* the tap, an optional one-line "anything to
+     add?" box slides in — never required. A reaction may be changed; capture the latest
+     choice and prevent accidental rapid duplicate events in the client.
+  2. **Share row** — a native **Share** button + a **Copy link** button (see sharing below).
+  3. **Quiet deeper row** — small "Idea? Bug? → Feedback" (opens the modal) and "GitHub ↗".
+- Show this card after a chapter download is initiated and after a completed book download
+  is initiated. Do not place it between the ready result and its primary Download action.
+- **Where signals go (no new infra):** bare reactions → **PostHog** event
+  `feedback_reaction {rating, route, jobId}` (NOT email — aggregate on a dashboard, don't
+  flood the inbox). Reaction-with-text or the full modal → `/api/feedback` → Gmail. Share
+  clicks → PostHog `share_clicked {network}`.
+- **Sharing (frictionless progressive-enhancement ladder):** primary button uses the **Web Share API
+  (`navigator.share()`)** → native OS share sheet on mobile (one tap, every app). Where
+  unavailable (desktop), fall back to **Copy link** + a couple of intent links (X:
+  `intent/tweet`, WhatsApp: `wa.me/?text=`, LinkedIn). **Pre-write editable share copy**
+  ("I turned a boring textbook chapter into an expert-annotated one with hb-pdf — it strikes
+  outdated facts and scribbles margin notes like a professor. Try it:" + URL). Append
+  `?ref=share&utm_source={network}` for PostHog virality attribution (`native_share`,
+  `copy`, `x`, `whatsapp`, or `linkedin`). Call `navigator.share()` synchronously from the
+  button's click handler so it retains the browser's required user activation. Treat user
+  cancellation as neither an error nor a successful share event. Copy-link must show an
+  accessible on-page “Copied” confirmation and fall back when the Clipboard API fails.
+  *(Future, not now:
+  sharing an image of the annotated page — most viral but touches private content + asset
+  plumbing; text+link ships today.)*
+
+- **New route `POST /api/feedback` in the site Worker** — a near-copy of `/api/annotate`'s
+  front matter: verify the Turnstile token server-side, KV rate-limit (5/IP/day), honeypot
+  check. Then send an email; store nothing. Payload:
+  `{type: "bug|idea|praise|other", message, email?(optional reply-to), context:{route, ts, userAgent, jobId?, errorMsg?}}`.
+- Server validation is authoritative: JSON only; reject unknown fields; type allowlist;
+  message 1–2,000 characters; optional email ≤ 254 characters and syntactically valid;
+  route/error/user-agent fields length-capped; timestamp normalized server-side; job ID
+  must be a UUID; total request body ≤ 16 KB. The hidden honeypot field must be empty.
+  Whitelist context fields rather than spreading the supplied object into logs or email.
+- Hash the Cloudflare client IP with the existing `RATE_LIMIT_SALT`; use a distinct
+  `feedback:daily:{yyyy-mm-dd}:{hash}` KV key with a short TTL. Do not store the raw IP.
+  Return friendly `400`, `403`, `413`, `429`, and `503` JSON errors. A successful request
+  returns `202` and an on-page thank-you state. Do not retry an email automatically in a
+  way that could create duplicates; send a Resend idempotency key for each submission.
+- Send plain text email rather than rendering user input as HTML. If supplied and valid,
+  set the user's optional email as `Reply-To`; never put it in `From`. Propagate Resend
+  failures as a generic friendly error without leaking provider details or secrets.
+- **Subject tag for Gmail filtering:** `[HB-PDF] {Type} — "{first ~60 chars of message}"`.
+  Strip CR/LF and control characters from the subject fragment. Body includes only the
+  whitelisted context fields. **Never** include the PDF, its filename, access key, or its text.
+  (Human sets a Gmail filter: `subject:[HB-PDF]` → label `hb-pdf`, star, never-spam.)
+- **Persistent + contextual entry points to the modal:** an always-visible "Feedback" pill
+  anchored to a screen edge (opposite the primary CTA) opens the modal (type selector,
+  message box, optional email, honeypot, existing Turnstile widget, on-page thank-you
+  state). The error state shows a "Didn't work? Tell us →" that opens the modal pre-set to
+  type=Bug with `errorMsg` included in hidden context but not forced into the editable
+  message. Use one reusable feedback form/state machine for the inline reaction follow-up
+  and the modal so validation and Turnstile behavior cannot drift. The modal must trap
+  focus, close with Escape, restore focus, carry accessible labels, and announce submit
+  success/errors. (The post-download card above is the main driver; the
+  pill just guarantees feedback is reachable from anywhere.)
+- **GitHub path inside the modal (for structured requests):** two links —
+  `issues/new?template=feature_request.yml` and `issues/new?labels=bug&template=bug_report.yml`.
+  Add those two issue **forms** + `config.yml` (`blank_issues_enabled: false`, contact link
+  back to the site) under `.github/ISSUE_TEMPLATE/`. Optional footer "★ Star on GitHub" link.
+
+#### Expected implementation shape
+
+- `site/app/src/components/feedback-experience.tsx` — success card, persistent pill,
+  accessible modal, inline optional comment, share controls, and thank-you/error states.
+- `site/app/src/lib/analytics.client.ts` — one-time PostHog initialization and typed,
+  privacy-safe capture helpers.
+- `site/app/src/lib/feedback.ts` — shared payload types, client limits, share copy, and
+  referral URL builder.
+- `site/app/src/lib/turnstile.server.ts` — shared server verifier extracted without
+  changing the annotation route's existing behavior.
+- `site/app/src/lib/rate-limit.server.ts` — salted-IP hashing and namespaced KV soft-limit
+  helper. Refactoring existing duplicated logic is allowed only with regression tests.
+- `site/app/src/routes/api/feedback.ts` — validation, honeypot, dedicated Turnstile token,
+  soft rate limit, and direct Resend REST call.
+- `.github/ISSUE_TEMPLATE/{feature_request.yml,bug_report.yml,config.yml}` — valid GitHub
+  issue forms targeting `snknitin/HalfBloodProfessor-Pdf`.
+- Add focused tests for payload validation, privacy-field filtering, subject sanitization,
+  honeypot rejection, Turnstile failure, KV limit response, Resend failure, share URL/UTM
+  generation, and reaction de-duplication. Mock all external calls; tests send no email and
+  no PostHog event.
+
+#### Task 6 configuration and handoff
+
+- Higgsfield secrets: `RESEND_API_KEY`, `HB_FEEDBACK_TO_EMAIL`.
+- PostHog public configuration: project token + API host, supplied through the site's
+  supported public runtime/build configuration and never confused with a secret.
+- Existing secrets reused: `TURNSTILE_SECRET`, `RATE_LIMIT_SALT`; existing binding reused:
+  `KV`. No D1, R2, Durable Object, webhook, account system, or PDF storage is added.
+- Update the privacy/policies page with the accurate feedback-processing disclosure.
+- Human-only final setup: create the Resend account with the destination Gmail address,
+  add the two Higgsfield secrets, create the Gmail filter, and provide PostHog public config.
+
+*Done when:* a one-tap reaction after either download fires exactly one privacy-safe
+PostHog event with no typing or challenge; analytics are confirmed initialized rather than
+silently optional; the native Share button opens the OS share sheet on a supported mobile
+browser and Copy-link works on desktop with pre-filled `?ref=share`/UTM copy; cancellation
+is quiet; a text submission using its own Turnstile token arrives in Gmail with the tagged,
+sanitized subject and whitelisted context but no PDF content, filename, or access key; the
+application persists no feedback body; honeypot + Turnstile + payload caps + the KV soft
+limit reject ordinary spam/repeated submissions; the error-state trigger opens a Bug report
+with safe error context; the modal passes keyboard/focus checks; both GitHub template links
+open valid pre-labeled issue forms; automated tests and the existing site tests/build pass.
+
 **Deferred, do not pick up:** custom domain (`hb-pdf.app`), OCR/scanned PDFs, model
 changes (B2 harness is future-only), Cloudflare Containers migration, Remotion promo;
 a conservative deterministic non-content-page classifier before model calls that skips
