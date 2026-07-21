@@ -1,0 +1,53 @@
+name: Bug report
+description: Report something in hb-pdf that did not work
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the behavior without attaching private PDFs, access keys, payment details, or API keys.
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened?
+      placeholder: I expected... Instead...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Opened...
+        2. Selected...
+        3. Saw...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where did it happen?
+      options:
+        - Free chapter annotation
+        - Teacher's Pet annotation
+        - Professor's Pass whole book
+        - Payment or access-key recovery
+        - Download or PDF preview
+        - Feedback or sharing
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and device
+      placeholder: Chrome on Windows, Safari on iPhone, etc.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I have not included a private PDF, access key, API key, payment detail, or personal document text.
+          required: true
