@@ -156,13 +156,14 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
     shape = page.new_shape()  # never share partially-built drawing commands
 
     if kind == "diagram":
+        diagram_layout, diagram_title = _diagram_layout(annotation.get("title"))
         area = _clamp_rect(margins.bottom, bounds, 10)
         diagram_side = "bottom"
         if area is None or area.height < 55:
             side, side_box = margins.side_box()
             diagram_side = side
             box = _clamp_rect(side_box, bounds, 10)
-            needed = scribe.diagram_height(annotation["labels"], annotation.get("title"))
+            needed = scribe.diagram_height(annotation["labels"], diagram_title, diagram_layout)
             if box is None:
                 _drop(report, page_number, kind, "no_space")
                 return
@@ -172,16 +173,20 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
                 _drop(report, page_number, kind, "no_space")
                 return
             margins.commit(side, area.y1)
-        if not _diagram_fits(area, annotation["labels"], annotation.get("title")):
+        if not _diagram_fits(area, annotation["labels"], diagram_title, diagram_layout):
             _drop(report, page_number, kind, "unsafe_geometry")
             return
-        scribe.chain_diagram(
+        diagram_renderer = {
+            "tree": scribe.tree_diagram,
+            "math": scribe.equation_diagram,
+        }.get(diagram_layout, scribe.chain_diagram)
+        diagram_renderer(
             page,
             shape,
             area,
             annotation["labels"],
             rng,
-            annotation.get("title"),
+            diagram_title,
             color=color,
             text_color=scribe.INK,
         )
@@ -284,6 +289,7 @@ def _annotation_color(annotation: dict[str, Any], rng):
     if kind == "highlight":
         return {
             "key": scribe.HIGHLIGHT,
+            "theory": scribe.HIGHLIGHT_ORANGE,
             "example": scribe.HIGHLIGHT_ORANGE,
             "definition": scribe.HIGHLIGHT_BLUE,
             "evidence": scribe.HIGHLIGHT_GREEN,
@@ -368,13 +374,29 @@ def _mark_padding(kind: str) -> float:
     }.get(kind, 3)
 
 
-def _diagram_fits(area: fitz.Rect, labels: list[str], title: str | None = None) -> bool:
+def _diagram_layout(title: str | None) -> tuple[str, str | None]:
+    if title:
+        for prefix, layout in (("TREE:", "tree"), ("MATH:", "math")):
+            if title.upper().startswith(prefix):
+                clean_title = title[len(prefix):].strip()
+                return layout, clean_title or None
+    return "chain", title
+
+
+def _diagram_fits(
+    area: fitz.Rect,
+    labels: list[str],
+    title: str | None = None,
+    layout: str = "chain",
+) -> bool:
     if area.width < 48 or area.height < 30:
         return False
     if area.width >= area.height:
+        if layout in {"tree", "math"}:
+            return area.width >= 150 and area.height >= 48
         widths = [scribe._note_font.text_length(label, 6.5) + 14 for label in labels]
         return sum(widths) + 24 * (len(labels) - 1) <= area.width
-    return scribe.diagram_height(labels, title) <= area.height
+    return scribe.diagram_height(labels, title, layout) <= area.height
 
 
 def _drop(report: RenderReport, page: int, kind: str, reason: str) -> None:
