@@ -21,7 +21,7 @@ What exists and works (see `outputs/Ch1_annotated.pdf` for proof — 5 pages, 25
 
 | File | Role |
 |------|------|
-| `app/scribe.py` | Ink primitives: clean strike/underline, hand-drawn circles, brackets, checkmarks, compact callout icons, curved arrows, semantic highlighter quads, star/asterisk/exclaim doodles, rotated margin notes in embedded handwriting fonts, lists, and chain diagrams |
+| `app/scribe.py` | Ink primitives: clean strike/underline, hand-drawn circles, brackets, checkmarks, compact callout icons, curved arrows, star/asterisk/exclaim doodles, rotated margin notes in embedded handwriting fonts, lists, chain diagrams, dependency trees, and conceptual equation diagrams |
 | `app/pipeline.py` | Quote→coordinate matching (`page.search_for` + CJK-ligature fallback), anchor-ordered greedy margin placement, CLI |
 | `app/annotations_ch1.json` | 25 hand-authored annotations in the exact JSON schema the LLM must emit |
 | `app/fonts/` | Caveat (margin notes), Homemade Apple (scrawled corrections) — OFL/Apache, embeddable |
@@ -40,7 +40,6 @@ deterministic Python (`sha256(pdf_bytes)` seeds the RNG) — same upload, identi
   {"type": "underline", "quote": "verbatim substring from the page", "note": "margin note <= 36 words", "double": false},
   {"type": "strike",    "quote": "the outdated phrase", "correction": "<= 8 words", "note": "optional why"},
   {"type": "circle",    "quote": "weak claim", "note": "margin note; arrow drawn to it"},
-  {"type": "highlight", "quote": "key phrase", "meaning": "key | example | definition | evidence | caution"},
   {"type": "doodle",    "quote": "anchor text", "symbol": "star | asterisk | exclaim"},
   {"type": "margin",    "quote": "anchor text", "note": "commentary tied to this line"},
   {"type": "bracket",   "quote": "opening anchor", "end_quote": "optional ending anchor", "note": "section-level insight"},
@@ -53,10 +52,9 @@ deterministic Python (`sha256(pdf_bytes)` seeds the RNG) — same upload, identi
 
 Prompt rules that keep the deterministic side safe (enforce in the system prompt):
 - Quotes must be **verbatim substrings, 3–8 words**, never starting or ending inside a
-  hyphen-wrapped word (hyphen-split quotes silently fail to match).
-- **≤ 10 annotations per page**; at most one `diagram` per document.
-- Highlight meanings are stable across every file: yellow key idea, orange example or
-  application, blue definition or concept, green evidence or result, red caution or error.
+  hyphen-wrapped word (hyphen-split quotes silently fail to match). Underlines may span a
+  complete sentence of up to 30 words.
+- **≤ 15 annotations per page**; at most one `diagram` per eight-page window.
 - Voice: terse, confident, slightly caustic expert ("Obviously dated — Göbekli Tepe, ~9500 BCE").
   Notes carry real, current knowledge: corrections, updated numbers, newer results, better methods.
 - Unmatched quotes are dropped silently by the engine — a missing doodle is invisible,
@@ -88,7 +86,7 @@ Prompt rules that keep the deterministic side safe (enforce in the system prompt
   (content = annotation JSON keyed by hash, never the text itself), and PostHog events.
 - **Limits:** digital-text PDFs only (empty extraction → friendly rejection, no OCR).
   Free: ≤ 50 pages, ≤ 20 MB, 3 docs/IP/day. Teacher's Pet (monthly): ≤ 150 pages,
-  ≤ 50 MB, 10/day, 100/month. Professor's Pass (one-time whole book): one document,
+  ≤ 50 MB, 5/day, 30/month. Professor's Pass (one-time whole book): one document,
   ≤ 1,000 pages, ≤ 150 MB. Full tier design in **B6**.
 
 ### B1. Engine service (`engine/`)
@@ -148,11 +146,11 @@ tried as a replacement:
    `outputs/eval/<model>/annotated.pdf` + a summary (annotations per page, % quotes
    matched, token usage).
 2. Promotion bar: the candidate must retain *specific* corrections (named results, dates,
-   numbers) at 8–10 annotations/page with a similar quote-match rate. Specificity is the
+   numbers) at 12–15 annotations/dense page with a similar quote-match rate. Specificity is the
    product; generic notes ("this may be outdated") fail the candidate.
 
-Already-built cost levers (keep them on): per-page cache, ≤ 10 annotations/page,
-`max_output_tokens` = 2,200, short-circuit near-empty pages, tiered daily quotas (B6),
+Already-built cost levers (keep them on): per-page cache, ≤ 15 annotations/page,
+`max_output_tokens` = 3,200, short-circuit near-empty pages, tiered daily quotas (B6),
 structured outputs (no retry burn on parse failures).
 
 ### B3. Website (`site/` — Higgsfield, project name `hb-pdf`)
@@ -218,21 +216,21 @@ remain an optional future migration (Workers Paid plan) and are NOT required for
 
 | Decision | Value |
 |---|---|
-| Teacher's Pet price | **$5 / 30 days**, yearly **$40** |
-| Professor's Pass price | **$3.99 per book, one-time** |
+| Teacher's Pet price | **$5.99 / 30 days**, yearly **$49.99** |
+| Professor's Pass price | **$4.99 per book, one-time** |
 | Book caps | **1,000 pages / 150 MB.** The page cap is an anti-abuse bound (stitching several PDFs into one file to pay once), not a product limit — it covers virtually every real single book, every job under it is profitable (break-even ≈ 2,575 p), and it bounds wall-time. The 150 MB is a technical bound of the 1 GB Space. Over-cap books get a friendly "split it into two passes" message |
 | Book progress UX | **Chapter-aware chunking:** align chunk boundaries to the PDF's table of contents (`doc.get_toc()`) when present, and show chapters finishing live ("✓ Ch 3: Statistical Learning — done · scribbling Ch 4…"); fallback to "Part 3 of 12 (pages 101–150)" when no TOC. The user watches their book get finished chapter by chapter |
 | Book result retention | **24 h, encrypted, keyed to access key** — exists as delivery insurance only (so a dropped connection never requires re-crediting or a free re-run), not a library |
 | Model | **Same model for every tier** (current `HB_MODEL`); plans differ on limits/priority only; open-source swap possible later via B2 harness |
-| Annotation density | **8–10 per dense page — dense marginalia IS the product.** Margins full of notes, underlines, arrows, fact-checks, corrections, highlights, like an expert proofread it. Fix placement quality, never reduce density |
+| Annotation density | **12–15 per dense page — dense marginalia IS the product.** The count includes visual emphasis marks as well as written notes. Margins full of notes, underlines, arrows, fact-checks, and corrections, like an expert proofread it. Fix placement quality, never reduce density |
 | Payments go live | **only after the P0 reliability fixes** (smoke report §16, Priority 0–1) |
 | Custom domain (`hb-pdf.app`) | **DEFERRED — low priority, do not work on it** |
 
 #### Tiers
 
-| | Free ("Study Hall") | Teacher's Pet — $5/30 days ($40/yr) | Professor's Pass — $3.99 one-time |
+| | Free ("Study Hall") | Teacher's Pet — $5.99/30 days ($49.99/yr) | Professor's Pass — $4.99 one-time |
 |---|---|---|---|
-| What you get | 3 docs/day | 10 docs/day, 100/month | **one whole book, once** |
+| What you get | 3 docs/day | 5 docs/day, 30/month | **one whole book, once** |
 | Max file size | 20 MB | 50 MB | 150 MB |
 | Max pages | 50 | 150 | 1,000 |
 | Model | same for all tiers (`HB_MODEL`) | same | same |
@@ -252,14 +250,14 @@ the same-model-everywhere decision is a cost decision, not just a simplicity one
 | Free doc, worst case (50 p, mini) | ~$0.08 |
 | Free user, maxed month (3/day × 50 p) | ~$7.20 — Turnstile-gated abuse ceiling |
 | Teacher's Pet doc, worst case (150 p, mini) | ~$0.23 |
-| Teacher's Pet, maxed month (100 docs × 150 p) | ~$23 |
+| Teacher's Pet, maxed month (30 docs × 150 p) | ~$7 |
 | Teacher's Pet, realistic month (10–20 docs) | ~$2.30–4.60 |
-| Professor's Pass book, typical (300–600 p) | ~$0.47–0.93 — **77–88% margin at $3.99** |
+| Professor's Pass book, typical (300–600 p) | ~$0.47–0.93 — **81–91% margin at $4.99** |
 | Professor's Pass book, worst case (1,000 p, mini) | ~$1.55 — still ~61% margin |
-| Break-even page count at $3.99 | ~2,575 pages — the 1,000-page cap keeps every job profitable |
+| Break-even page count at $4.99 | ~3,220 pages — the 1,000-page cap keeps every job profitable |
 
-**Teacher's Pet: $5 / 30 days, $40/year** (anchor: z-lib/Anna's Archive donation tiers).
-**Professor's Pass: $3.99 one-time per book.** Median Teacher's Pet payer is profitable;
+**Teacher's Pet: $5.99 / 30 days, $49.99/year** (anchor: z-lib/Anna's Archive donation tiers).
+**Professor's Pass: $4.99 one-time per book.** Median Teacher's Pet payer is profitable;
 a maxed-out whale costs ~$23 — bounded, acceptable at donation-ware scale. The book pass
 is profitable in every case. Revisit after ~20 paying users with telemetry.
 
@@ -301,7 +299,7 @@ A whole book is not a new engine — it is the existing pipeline run in **chapte
   advancing chapter list is the promise. (Side effect: a stitched multi-book file
   produces a garbled chapter list — the abuse cosmetically punishes itself.)
 - **Delivery — the one amendment to the no-storage rule:** a paying user must not lose a
-  $3.99 result because their laptop slept during minute 2. On completion, store the
+  $4.99 result because their laptop slept during minute 2. On completion, store the
   annotated PDF **encrypted, keyed to the access key, TTL 24 h** (R2 or Space disk), and
   return a download link. The retention exists purely as **delivery insurance** — so a
   dropped connection never forces a re-credit or a free re-run — not as a library feature.
@@ -319,8 +317,8 @@ A whole book is not a new engine — it is the existing pipeline run in **chapte
 #### Payment rails (one rail grants access; the rest are tips)
 
 - **Stripe Payment Links — the only rail that mints keys.** Three price points, two
-  products: Teacher's Pet ($5 one-time → 30-day entitlement; $40 one-time → 365-day
-  entitlement) and Professor's Pass ($3.99 one-time → one book credit).
+  products: Teacher's Pet ($5.99 one-time → 30-day entitlement; $49.99 one-time → 365-day
+  entitlement) and Professor's Pass ($4.99 one-time → one book credit).
   Flow: Payment Link → success redirect with `session_id` → site server route verifies the
   session as paid via Stripe API → mints key with the right tier (idempotent on
   `session_id`) → shows it. No webhook needed at this scale; add
@@ -434,12 +432,16 @@ disconnect still allows re-download; a forced failure preserves the credit; a
 1,200-page file is rejected with the friendly message.
 
 **Task 5 — Stripe** (B6, only after Tasks 1–4): two Payment Links (three price points:
-$5/30-day, $40/365-day, $3.99/book), success-page session verification, idempotent key
+$5.99/30-day, $49.99/365-day, $4.99/book), success-page session verification, idempotent key
 minting, BuyMeACoffee as a no-entitlement tip button, footer payment-policy line.
 *Done when:* the full B6 acceptance list passes in Stripe test mode.
 
 **Deferred, do not pick up:** custom domain (`hb-pdf.app`), OCR/scanned PDFs, model
-changes (B2 harness is future-only), Cloudflare Containers migration, Remotion promo.
+changes (B2 harness is future-only), Cloudflare Containers migration, Remotion promo;
+a conservative deterministic non-content-page classifier before model calls that skips
+tables of contents, indexes, glossaries, bibliographies/references, and administrative or
+empty pages using extracted headings, PDF TOC metadata, lexical signals, and layout
+heuristics, logs the skip reason, and sends uncertain pages rather than risking lost content.
 
 ### Iteration workflow (how the human works on this)
 
@@ -461,12 +463,12 @@ B2, B3, B4) — one phase per session, run its acceptance criteria before moving
 | Hallucinated corrections | UI disclaimer; prompt favors hedged phrasing; brand as study companion, not fact-checker |
 | Film stills on the public site | Never — design reference only; generate original assets |
 | API key/secret leakage | Key only in engine secrets; site→engine authed by shared secret; nothing client-side |
-| Cost abuse | Turnstile + tiered quotas (free 3/day/IP, pass 10/day + 100/mo per key) + page caps + per-page cache |
+| Cost abuse | Turnstile + tiered quotas (free 3/day/IP, pass 5/day + 30/mo per key) + page caps + per-page cache |
 | Key leak / sharing | A shared key burns its own quota — self-limiting; no fingerprinting needed |
-| Whale pass holders | Monthly ceiling (100 docs) bounds worst case at ~$23/user/mo; telemetry decides if pricing moves |
+| Whale pass holders | Monthly ceiling (30 docs) bounds worst case at ~$7/user/mo; telemetry decides if pricing moves |
 | Big book OOMs the 1 GB Space | Sequential chapter chunks + 150 MB / 1,000-page caps + memory test in B6 acceptance; upgrade the Space instance with first revenue |
-| Stitched multi-book files on one $3.99 pass | 1,000-page cap bounds leakage at ~2 books per fee while every job stays profitable (break-even ~2,575 p); chapter progress list looks garbled for stitched files. Do NOT build stitch-detection unless telemetry shows real leakage |
+| Stitched multi-book files on one $4.99 pass | 1,000-page cap bounds leakage at ~2 books per fee while every job stays profitable (break-even ~3,220 p); chapter progress list looks garbled for stitched files. Do NOT build stitch-detection unless telemetry shows real leakage |
 | Paying user loses a long-run result | Book results stored encrypted 24 h, re-downloadable by key; credit consumed only on success |
 | Cold container start | `sleepAfter: 15m` + cached sample doc keeps demos snappy; progress UI absorbs the rest |
 | Copyright of uploads | In-memory only, never stored, never public; "upload only content you may use" |
-| Noisy/ugly pages | Density targets 8–10 on dense pages (dense marginalia IS the product) — the fix is placement quality: rectangle clamping, correction wrapping, both-margin scoring, per-annotation render isolation (smoke report §16). Seeded RNG → reproducible → debuggable |
+| Noisy/ugly pages | Density targets 12–15 on dense pages (dense marginalia IS the product) — the fix is placement quality: rectangle clamping, correction wrapping, both-margin scoring, per-annotation render isolation (smoke report §16). Seeded RNG → reproducible → debuggable |

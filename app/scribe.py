@@ -313,8 +313,12 @@ def correction_text(page, anchor_rect, text, rng, page_rect=None, color=INK):
     return note_text(page, box, text, rng, fontsize=fs, fontfile=SCRAWL_FONT, fontname="HomemadeApple", color=color)
 
 
-def diagram_height(labels, title=None, fs=9.5):
-    """Height a vertical chain diagram needs."""
+def diagram_height(labels, title=None, layout="chain", fs=9.5):
+    """Height a diagram needs when rendered in a narrow margin."""
+    if layout in {"tree", "math"}:
+        # Narrow areas use the safe vertical fallback in the specialized
+        # renderers: root/result plus each child/input.
+        return (len(labels) + 1) * (fs * 1.9 + 15)
     return len(labels) * (fs * 1.9 + 15) + (16 if title else 0)
 
 
@@ -367,6 +371,95 @@ def chain_diagram(
                       (cx + rng.uniform(-2, 2), r.y0 - 3), rng, color=color)
             prev_bottom = r.y1
             y = r.y1 + 15
+
+
+def tree_diagram(
+    page, shape, area, labels, rng, title=None, color=INK_BLUE, text_color=INK
+):
+    """Root concept above 2-5 child concepts, with a vertical safe fallback."""
+    if not title or area.width < max(150, area.height * 1.35):
+        chain_diagram(
+            page, shape, area, [title or "concept", *labels], rng,
+            color=color, text_color=text_color,
+        )
+        return
+
+    fs = 9.5
+    while fs >= 6.5:
+        child_widths = [_note_font.text_length(text, fs) + 14 for text in labels]
+        root_width = _note_font.text_length(title, fs) + 16
+        gap = 12
+        if max(root_width, sum(child_widths) + gap * (len(labels) - 1)) <= area.width - 8:
+            break
+        fs -= 0.5
+
+    h = fs * 1.9
+    root_width = min(area.width - 12, _note_font.text_length(title, fs) + 16)
+    root = fitz.Rect(
+        area.x0 + (area.width - root_width) / 2,
+        area.y0 + 3,
+        area.x0 + (area.width + root_width) / 2,
+        area.y0 + 3 + h,
+    )
+    circle(shape, root + (2, 2, -2, -2), rng, color=color)
+    note_text(page, root + (6, h * 0.18, 10, 4), title, rng, fontsize=fs, color=text_color)
+
+    child_widths = [_note_font.text_length(text, fs) + 14 for text in labels]
+    gap = 12
+    total = sum(child_widths) + gap * (len(labels) - 1)
+    x = area.x0 + max(4, (area.width - total) / 2)
+    child_y = min(area.y1 - h - 4, root.y1 + max(22, area.height * 0.25))
+    for text, width in zip(labels, child_widths):
+        child = fitz.Rect(x, child_y, x + width, child_y + h)
+        arrow(shape, (root.x0 + root.width / 2, root.y1 + 3),
+              (child.x0 + child.width / 2, child.y0 - 3), rng, color=color)
+        circle(shape, child + (2, 2, -2, -2), rng, color=color)
+        note_text(page, child + (6, h * 0.18, 10, 4), text, rng, fontsize=fs, color=text_color)
+        x = child.x1 + gap
+
+
+def equation_diagram(
+    page, shape, area, labels, rng, title=None, color=INK_BLUE, text_color=INK
+):
+    """Conceptual inputs joined as addition and pointing to a result."""
+    if not title or area.width < max(170, area.height * 1.5):
+        chain_diagram(
+            page, shape, area, [*labels, title or "result"], rng,
+            color=color, text_color=text_color,
+        )
+        return
+
+    fs = 9.5
+    while fs >= 6.5:
+        widths = [_note_font.text_length(text, fs) + 14 for text in labels]
+        result_width = _note_font.text_length(title, fs) + 16
+        total = sum(widths) + result_width + (len(labels) - 1) * 18 + 34
+        if total <= area.width - 8:
+            break
+        fs -= 0.5
+
+    h = fs * 1.9
+    widths = [_note_font.text_length(text, fs) + 14 for text in labels]
+    result_width = _note_font.text_length(title, fs) + 16
+    total = sum(widths) + result_width + (len(labels) - 1) * 18 + 34
+    x = area.x0 + max(4, (area.width - total) / 2)
+    cy = area.y0 + area.height * 0.55
+    previous = None
+    for index, (text, width) in enumerate(zip(labels, widths)):
+        if index:
+            note_text(page, fitz.Rect(x, cy - 9, x + 16, cy + 12), "+", rng,
+                      fontsize=fs + 1, color=text_color)
+            x += 18
+        operand = fitz.Rect(x, cy - h / 2, x + width, cy + h / 2)
+        circle(shape, operand + (2, 2, -2, -2), rng, color=color)
+        note_text(page, operand + (6, h * 0.18, 10, 4), text, rng, fontsize=fs, color=text_color)
+        previous = operand
+        x = operand.x1
+
+    result = fitz.Rect(x + 34, cy - h / 2, x + 34 + result_width, cy + h / 2)
+    arrow(shape, (previous.x1 + 4, cy), (result.x0 - 5, cy), rng, color=color)
+    circle(shape, result + (2, 2, -2, -2), rng, color=color)
+    note_text(page, result + (6, h * 0.18, 10, 4), title, rng, fontsize=fs, color=text_color)
 
 
 def blank_page_doodle(page, shape, bounds, rng, color=INK_BLUE):

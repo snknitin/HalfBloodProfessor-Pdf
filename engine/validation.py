@@ -14,7 +14,7 @@ MAX_NOTE_CHARS = 320
 MAX_CORRECTION_CHARS = 80
 MAX_DIAGRAM_TITLE_CHARS = 80
 MAX_DIAGRAM_LABEL_CHARS = 60
-MAX_ANNOTATIONS_PER_PAGE = 10
+MAX_ANNOTATIONS_PER_PAGE = 15
 
 QUOTE_KINDS = {
     "underline",
@@ -85,9 +85,10 @@ def sanitize_annotation(
 ) -> dict[str, Any] | None:
     """Validate and length-bound one annotation without retaining extra fields.
 
-    Model/cache ingestion enforces the 3-8 word prompt contract.  The renderer
-    can also safely consume the shorter anchors in Track A's proven hand-authored
-    fixture; character bounds and structural checks still apply there.
+    Model/cache ingestion enforces 3-8 word anchors, except that underlines and
+    legacy highlights may span a complete sentence of up to 30 words. The renderer can safely
+    consume shorter anchors in Track A's proven hand-authored fixture; character
+    bounds and structural checks still apply there.
     """
     if not isinstance(candidate, dict):
         return None
@@ -112,7 +113,10 @@ def sanitize_annotation(
     if kind not in QUOTE_KINDS:
         return None
     quote = _bounded_string(candidate.get("quote"), MAX_QUOTE_CHARS)
-    if not quote or (enforce_quote_words and not 3 <= len(quote.split()) <= 8):
+    max_quote_words = 30 if kind in {"underline", "highlight"} else 8
+    if not quote or (
+        enforce_quote_words and not 3 <= len(quote.split()) <= max_quote_words
+    ):
         return None
 
     clean = {"type": kind, "quote": quote}
@@ -131,7 +135,7 @@ def sanitize_annotation(
             clean["note"] = note
     elif kind == "highlight":
         meaning = candidate.get("meaning", "key")
-        if meaning not in {"key", "example", "definition", "evidence", "caution"}:
+        if meaning not in {"key", "theory", "example", "definition", "evidence", "caution"}:
             return None
         clean["meaning"] = meaning
     elif kind in {"circle", "scribble", "margin"}:

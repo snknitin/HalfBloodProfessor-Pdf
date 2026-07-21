@@ -55,7 +55,7 @@ class FakeResponses:
     async def create(self, **kwargs):
         self.calls += 1
         assert kwargs["temperature"] == 0.3
-        assert kwargs["max_output_tokens"] == 2_200
+        assert kwargs["max_output_tokens"] == 3_200
         assert kwargs["text"]["format"]["strict"] is True
         return self.handler(kwargs)
 
@@ -438,7 +438,7 @@ class RendererReliabilityTests(unittest.TestCase):
     def test_highlight_meanings_map_to_stable_colors(self):
         expected = {
             "key": render.scribe.HIGHLIGHT,
-            "example": render.scribe.HIGHLIGHT_ORANGE,
+            "theory": render.scribe.HIGHLIGHT_ORANGE,
             "definition": render.scribe.HIGHLIGHT_BLUE,
             "evidence": render.scribe.HIGHLIGHT_GREEN,
             "caution": render.scribe.HIGHLIGHT_RED,
@@ -709,12 +709,16 @@ class BookCreditTests(unittest.IsolatedAsyncioTestCase):
 class PromptContractTests(unittest.TestCase):
     def test_schema_caps_annotations_fields_and_disallows_extra_fields(self):
         annotations = ANNOTATION_SCHEMA["properties"]["annotations"]
-        self.assertEqual(annotations["maxItems"], 10)
+        self.assertEqual(annotations["maxItems"], 15)
         self.assertFalse(ANNOTATION_SCHEMA["additionalProperties"])
         variants = annotations["items"]["anyOf"]
         self.assertEqual(variants[0]["properties"]["quote"]["maxLength"], MAX_QUOTE_CHARS)
         self.assertEqual(
             variants[0]["properties"]["quote"]["pattern"],
+            r"^\S+(?:\s+\S+){2,29}$",
+        )
+        self.assertEqual(
+            variants[1]["properties"]["quote"]["pattern"],
             r"^\S+(?:\s+\S+){2,7}$",
         )
         self.assertEqual(variants[0]["properties"]["note"]["anyOf"][0]["maxLength"], MAX_NOTE_CHARS)
@@ -724,13 +728,51 @@ class PromptContractTests(unittest.TestCase):
         self.assertEqual(diagram["labels"]["items"]["maxLength"], MAX_DIAGRAM_LABEL_CHARS)
 
     def test_prompt_requests_expert_study_value_without_more_page_calls(self):
-        self.assertIn("plain English", main.SYSTEM_PROMPT)
+        self.assertIn("plain-English", main.SYSTEM_PROMPT)
         self.assertIn("mnemonic", main.SYSTEM_PROMPT)
         self.assertIn("20-36 words", main.SYSTEM_PROMPT)
-        self.assertIn("8-10 meaningful annotations", main.SYSTEM_PROMPT)
-        self.assertIn("mostly black handwritten note text", main.SYSTEM_PROMPT)
+        self.assertIn("12-15 meaningful annotation", main.SYSTEM_PROMPT)
+        self.assertIn("6-8 underlines", main.SYSTEM_PROMPT)
+        self.assertIn("Never invent an error", main.SYSTEM_PROMPT)
+        self.assertIn("black handwritten note text", main.SYSTEM_PROMPT)
         self.assertIn("zig-zag scratches", main.SYSTEM_PROMPT)
-        self.assertIn("key = yellow", main.SYSTEM_PROMPT)
+        self.assertIn("Never use pleasantries", main.SYSTEM_PROMPT)
+        self.assertIn('Write "Eg:"', main.SYSTEM_PROMPT)
+        self.assertIn("TREE:", main.SYSTEM_PROMPT)
+        self.assertIn("MATH:", main.SYSTEM_PROMPT)
+        self.assertIn("Surface the assumptions", main.SYSTEM_PROMPT)
+        self.assertIn("Do not correct spelling, grammar", main.SYSTEM_PROMPT)
+        self.assertNotIn("highlight:", main.SYSTEM_PROMPT)
+
+    def test_tree_and_math_diagrams_render_without_errors(self):
+        pdf = make_pdf(["A concept depends on feature choice and a practical constraint. " * 20])
+        annotations = [
+            {
+                "page": 1,
+                "type": "diagram",
+                "title": "TREE: model quality",
+                "labels": ["data", "objective", "evaluation"],
+            },
+            {
+                "page": 1,
+                "type": "diagram",
+                "title": "MATH: robust model",
+                "labels": ["good features", "constraints"],
+            },
+        ]
+        rendered_bytes, report = render.annotate_bytes(pdf, annotations)
+        self.assertTrue(rendered_bytes.startswith(b"%PDF"))
+        self.assertEqual(report.errors, [])
+
+    def test_sanitizer_allows_sentence_underlines(self):
+        long_quote = "one two three four five six seven eight nine ten eleven twelve"
+        payload = {
+            "annotations": [
+                {"type": "underline", "quote": long_quote, "double": False},
+            ]
+        }
+        clean = main._sanitize_annotations(payload)
+        self.assertEqual([item["type"] for item in clean], ["underline"])
 
     def test_prompt_schema_no_longer_generates_scribbles(self):
         variants = ANNOTATION_SCHEMA["properties"]["annotations"]["items"]["anyOf"]
@@ -738,6 +780,7 @@ class PromptContractTests(unittest.TestCase):
             variant["properties"]["type"]["const"] for variant in variants
         }
         self.assertNotIn("scribble", generated_types)
+        self.assertNotIn("highlight", generated_types)
         self.assertTrue({"bracket", "list", "checkmark", "callout"} <= generated_types)
 
     def test_sanitizer_enforces_character_caps_before_rendering_or_cache(self):
@@ -798,6 +841,19 @@ class PromptContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             main._sanitize_annotations(
                 {"annotations": [{"type": "highlight", "quote": "too short"}]}
+            )
+
+    def test_sanitizer_accepts_fifteen_annotations_and_rejects_sixteen(self):
+        annotation = {
+            "type": "underline",
+            "quote": "three useful exact words",
+            "double": False,
+        }
+        fifteen = {"annotations": [dict(annotation) for _ in range(15)]}
+        self.assertEqual(len(main._sanitize_annotations(fifteen)), 15)
+        with self.assertRaisesRegex(ValueError, "Too many annotations"):
+            main._sanitize_annotations(
+                {"annotations": [dict(annotation) for _ in range(16)]}
             )
 
 

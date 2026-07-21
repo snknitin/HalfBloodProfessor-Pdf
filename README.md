@@ -29,10 +29,9 @@ Public site: **https://hb-pdf.higgsfield.app**
 3. FastAPI extracts text with PyMuPDF and calls OpenAI once per page with a strict
    structured-output schema.
 4. The deterministic renderer maps exact quotes to coordinates, keeps annotation prose
-   in black handwriting, places 8-10 useful marks on dense pages, and adds brackets,
+   in black handwriting, places 12-15 useful marks on dense pages, and adds brackets,
    evidence checks, expert callouts, diagrams, or blank-page doodles where they teach
-   something. Highlight colors are stable: yellow=key, orange=example, blue=definition,
-   green=evidence, and red=caution. Whole books run in chapter-aware chunks and the
+   something. Whole books run in chapter-aware chunks and the
    encrypted result remains recoverable with its access key for 24 hours.
 
 | Part | Implementation |
@@ -48,7 +47,7 @@ Public site: **https://hb-pdf.higgsfield.app**
 
 - Searchable, digital-text PDFs only; scanned PDFs need OCR first.
 - Free: 50 pages, 20 MB, 3 documents/day.
-- Teacher's Pet: 150 pages, 50 MB, 10/day and 100/month.
+- Teacher's Pet: 150 pages, 50 MB, 5/day and 30/month.
 - Professor's Pass: one book up to 1,000 pages and 150 MB.
 - English-first annotations.
 
