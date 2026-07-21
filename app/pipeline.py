@@ -30,23 +30,43 @@ def _lig(q):
 
 
 class Margins:
-    """Free margin space per page + greedy top-down note placement."""
+    """Free page-edge space plus greedy note placement near each anchor."""
 
     def __init__(self, page):
         pr = page.rect
-        blocks = [fitz.Rect(b[:4]) for b in page.get_text("blocks")
-                  if b[4].strip() and b[1] > 50]  # ignore running header
+        raw_blocks = [
+            (fitz.Rect(block[:4]), block[4].strip())
+            for block in page.get_text("blocks")
+            if block[4].strip()
+        ]
+        headers = [rect for rect, _ in raw_blocks if rect.y0 <= 50]
+        footers = [
+            rect for rect, text in raw_blocks
+            if rect.y0 >= pr.height * 0.86 and len(text.split()) <= 8
+        ]
+        blocks = [
+            rect for rect, text in raw_blocks
+            if rect.y0 > 50
+            and not (rect.y0 >= pr.height * 0.86 and len(text.split()) <= 8)
+        ]
         if not blocks:
             blocks = [fitz.Rect(pr.width * 0.2, 50, pr.width * 0.8, pr.height - 50)]
         self.minx = min(b.x0 for b in blocks)
         self.maxx = max(b.x1 for b in blocks)
+        miny = min(b.y0 for b in blocks)
         maxy = max(b.y1 for b in blocks)
-        self.left = fitz.Rect(10, 52, self.minx - 8, pr.height - 30)
-        self.right = fitz.Rect(self.maxx + 8, 52, pr.width - 10, pr.height - 30)
-        self.bottom = fitz.Rect(self.minx, maxy + 12, self.maxx, pr.height - 24)
+        header_bottom = max((rect.y1 for rect in headers), default=4)
+        footer_top = min((rect.y0 for rect in footers), default=pr.height - 8)
+        vertical_y0 = max(12, header_bottom + 8)
+        vertical_y1 = min(pr.height - 18, footer_top - 8)
+        self.left = fitz.Rect(10, vertical_y0, self.minx - 8, vertical_y1)
+        self.right = fitz.Rect(self.maxx + 8, vertical_y0, pr.width - 10, vertical_y1)
+        self.top = fitz.Rect(self.minx, vertical_y0, self.maxx, miny - 10)
+        self.bottom = fitz.Rect(self.minx, maxy + 12, self.maxx, vertical_y1)
         self.cursor = {
             "left": self.left.y0,
             "right": self.right.y0,
+            "top": self.top.y0,
             "bottom": self.bottom.y0,
         }
 
@@ -58,7 +78,7 @@ class Margins:
         """Reserve a rect for `text` near anchor y. Caller must commit() the rect actually used."""
         if rng is not None:
             y += rng.uniform(-12, 16)
-        candidates = []
+        side_candidates = []
         for side, box in (("left", self.left), ("right", self.right)):
             if box.width < 48:
                 continue
@@ -66,17 +86,28 @@ class Margins:
             y0 = max(y - 4, self.cursor[side])
             if y0 + h <= box.y1:
                 tie_break = rng.uniform(0, 8) if rng is not None else 0
-                candidates.append((abs(y0 - y) + tie_break, -box.width, side, box, y0, h))
+                side_candidates.append((abs(y0 - y) + tie_break, -box.width, side, box, y0, h))
+
+        horizontal_candidates = []
+        for side, box in (("top", self.top), ("bottom", self.bottom)):
+            if box.width < 96 or box.height < 18:
+                continue
+            h = scribe.note_height(text, box.width - 8)
+            y0 = self.cursor[side]
+            if y0 + h <= box.y1:
+                edge = box.y1 if side == "top" else box.y0
+                tie_break = rng.uniform(0, 8) if rng is not None else 0
+                horizontal_candidates.append(
+                    (abs(edge - y) + tie_break, -box.width, side, box, y0, h)
+                )
+
+        prefer_horizontal = len(text.split()) >= 14
+        candidates = horizontal_candidates if prefer_horizontal and horizontal_candidates else side_candidates
+        if not candidates:
+            candidates = horizontal_candidates
         if candidates:
             _, _, side, box, y0, h = min(candidates)
             return fitz.Rect(box.x0 + 2, y0, box.x1 - 2, y0 + h + 4), side
-
-        box = self.bottom
-        if box.width >= 96 and box.height >= 18:
-            h = scribe.note_height(text, box.width - 8)
-            y0 = self.cursor["bottom"]
-            if y0 + h <= box.y1:
-                return fitz.Rect(box.x0 + 4, y0, box.x1 - 4, y0 + h + 4), "bottom"
         return None, "left"
 
     def commit(self, side, y1):
@@ -121,7 +152,9 @@ def annotate(pdf_path, annotations, out_path, keep_pages=None):
                 area = margins.bottom
                 if area.height < 55:  # no room under the text: run it down the wider margin
                     side, box = margins.side_box()
-                    need = scribe.diagram_height(a["labels"], a.get("title"))
+                    need = scribe.diagram_height(
+                        a["labels"], a.get("title"), width=box.width - 4
+                    )
                     y0 = max(margins.cursor[side], box.y1 - need)
                     if box.width < 48 or y0 + need > box.y1:
                         dropped.append((pno + 1, kind, "no space"))

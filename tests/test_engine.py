@@ -313,6 +313,55 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RendererReliabilityTests(unittest.TestCase):
+    def test_wrapped_vertical_diagram_labels_stay_inside_separate_nodes(self):
+        doc = fitz.open()
+        page = doc.new_page()
+        area = fitz.Rect(20, 40, 145, 430)
+        labels = [
+            "cheap retrieval adds candidates",
+            "reranker scores candidates",
+            "top results fit context better",
+            "reranking pipeline",
+        ]
+        shape = page.new_shape()
+        import random
+
+        with patch.object(
+            render.scribe, "node_text", wraps=render.scribe.node_text
+        ) as node_text:
+            render.scribe.chain_diagram(
+                page, shape, area, labels, random.Random(11), title="RAG stages"
+            )
+        node_boxes = [fitz.Rect(call.args[1]) for call in node_text.call_args_list]
+        self.assertEqual(len(node_boxes), len(labels))
+        for index, box in enumerate(node_boxes):
+            self.assertGreaterEqual(box.x0, area.x0)
+            self.assertLessEqual(box.x1, area.x1)
+            if index:
+                self.assertGreaterEqual(box.y0, node_boxes[index - 1].y1 + 14)
+        doc.close()
+
+    def test_long_notes_prefer_safe_horizontal_page_margins(self):
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 25), "Chapter heading", fontsize=9)
+        page.insert_textbox(
+            fitz.Rect(72, 100, 540, 650),
+            "Dense textbook content explains the system and its practical behavior. " * 20,
+            fontsize=10,
+        )
+        page.insert_text((290, 820), "12", fontsize=8)
+        margins = render.Margins(page)
+        note = (
+            "Practical rule: retrieve broadly, rerank precisely, then reserve context "
+            "space for the evidence that can change the answer."
+        )
+        box, side = margins.place(380, note)
+        self.assertIn(side, {"top", "bottom"})
+        self.assertGreater(box.width, max(margins.left.width, margins.right.width))
+        self.assertLessEqual(box.y1, getattr(margins, side).y1)
+        doc.close()
+
     def test_one_bad_annotation_cannot_fail_the_document(self):
         pdf = make_pdf([page_text()])
         annotations = [

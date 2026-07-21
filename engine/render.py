@@ -163,7 +163,9 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
             side, side_box = margins.side_box()
             diagram_side = side
             box = _clamp_rect(side_box, bounds, 10)
-            needed = scribe.diagram_height(annotation["labels"], diagram_title, diagram_layout)
+            needed = scribe.diagram_height(
+                annotation["labels"], diagram_title, diagram_layout, width=box.width - 4
+            )
             if box is None:
                 _drop(report, page_number, kind, "no_space")
                 return
@@ -265,19 +267,22 @@ def _render_one(page, bounds, margins, annotation, rects, rng, report):
                 _drop(report, page_number, "note", "unsafe_geometry")
             else:
                 margins.commit(side, used.y1)
-                if kind in {"circle", "margin", "bracket", "list", "callout"} or len(note.split()) >= 18:
+                if kind in {"circle", "margin", "bracket", "list", "callout"} or len(note.split()) >= 14:
                     if side == "left":
                         src = (used.x1 - 2, used.y0 + 6)
                         dst = (first.x0 - 7, first.y0 + first.height / 2)
                     elif side == "right":
                         src = (used.x0 + 2, used.y0 + 6)
                         dst = (first.x1 + 7, first.y0 + first.height / 2)
-                    else:
+                    elif side == "bottom":
                         src = (used.x0 + used.width / 2, used.y0 + 1)
                         dst = (first.x0 + first.width / 2, first.y1 + 5)
+                    else:  # top
+                        src = (used.x0 + used.width / 2, used.y1 - 1)
+                        dst = (first.x0 + first.width / 2, first.y0 - 5)
                     src = _clamp_point(src, bounds, 3)
                     dst = _clamp_point(dst, bounds, 3)
-                    if abs(dst[0] - src[0]) < 300:
+                    if abs(dst[0] - src[0]) < 300 and abs(dst[1] - src[1]) < 220:
                         scribe.arrow(shape, src, dst, rng, color=color)
     shape.commit()
 
@@ -320,11 +325,12 @@ def _decorate_blank_interior_pages(doc, rng, report: RenderReport) -> None:
 
 
 def _clamp_margins(margins: Margins, bounds: fitz.Rect) -> None:
-    for name in ("left", "right", "bottom"):
+    for name in ("left", "right", "top", "bottom"):
         rect = _clamp_rect(getattr(margins, name), bounds, 8)
         setattr(margins, name, rect or fitz.Rect(bounds.x0, bounds.y0, bounds.x0, bounds.y0))
     margins.cursor["left"] = margins.left.y0
     margins.cursor["right"] = margins.right.y0
+    margins.cursor["top"] = margins.top.y0
     margins.cursor["bottom"] = margins.bottom.y0
 
 
@@ -396,7 +402,7 @@ def _diagram_fits(
             return area.width >= 150 and area.height >= 48
         widths = [scribe._note_font.text_length(label, 6.5) + 14 for label in labels]
         return sum(widths) + 24 * (len(labels) - 1) <= area.width
-    return scribe.diagram_height(labels, title, layout) <= area.height
+    return scribe.diagram_height(labels, title, layout, width=area.width) <= area.height
 
 
 def _drop(report: RenderReport, page: int, kind: str, reason: str) -> None:
